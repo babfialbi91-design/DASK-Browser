@@ -9,7 +9,7 @@
 | الأداة | الإصدار | ملاحظات |
 |---|---|---|
 | Windows 10/11 | x64 | |
-| Visual Studio 2022 Build Tools | مع workload ‏"Desktop development with C++" (MSVC v143 + Windows 10 SDK) | `winget install Microsoft.VisualStudio.2022.BuildTools` ثم اختر الـ workload من Visual Studio Installer |
+| Visual Studio 2022 Build Tools | مع workload ‏"Desktop development with C++" (MSVC v143 + Windows 11 SDK) | مثبّت على هذا الجهاز في `D:\VS2022BuildTools` |
 | CMake | 3.21+ | يأتي ضمن Build Tools، أو `winget install Kitware.CMake` |
 | Git | أي إصدار حديث | |
 | CEF | 158.0.6 (Chromium 158.0.8127.89، قناة stable) | يُنزَّل تلقائيًا عبر السكربت أدناه — لا يُحفظ في Git |
@@ -19,6 +19,9 @@
 ## الإعداد والبناء خطوة بخطوة
 
 ```bat
+:: 0) إن لم يكن cmake على PATH، أضف أولاً:
+set PATH=D:\VS2022BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin;%PATH%
+
 :: 1) نزّل توزيعة CEF (~180 MB) إلى third_party/cef واكتب scripts/cef_root.txt
 powershell -ExecutionPolicy Bypass -File scripts/download_cef.ps1
 
