@@ -1,0 +1,20 @@
+# Build outputs
+build/
+build-*/
+out/
+x64/
+*.user
+*.suo
+
+# CEF distribution (downloaded via scripts/download_cef.ps1, never committed)
+third_party/
+scripts/cef_root.txt
+
+# Downloaded archives
+*.tar.bz2
+*.tar.xz
+
+# Temp / cache
+*.log
+*.tmp
+.vs/
