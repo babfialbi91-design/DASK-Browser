@@ -1219,6 +1219,11 @@ TabManager::Tab* TabManager::FindTabByBrowser(CefRefPtr<CefBrowser> browser) {
 
 void TabManager::SetActive(Tab* tab) {
   active_tab_id_ = tab->id;
+  // Phase 6: background tabs are throttled by Chromium itself because the
+  // layout hides their host windows (SW_HIDE). That pauses painting and
+  // throttles timers/parsers for hidden tabs, while audio, downloads and
+  // necessary page work continue per Chromium policy. (CefBrowserHost::
+  // WasHidden applies only to windowless rendering, which we do not use.)
   {
     ::EnterCriticalSection(&layout_lock_);
     layout_order_.clear();
@@ -1230,6 +1235,7 @@ void TabManager::SetActive(Tab* tab) {
   if (tab->browser) tab->browser->GetHost()->SetFocus(true);
   RequestLayout();
 }
+
 
 void TabManager::RequestLayout() {
   ::PostMessageW(main_hwnd_, WM_DASK_LAYOUT, 0, 0);

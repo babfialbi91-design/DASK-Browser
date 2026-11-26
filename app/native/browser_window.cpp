@@ -279,6 +279,17 @@ int RunBrowserWindow(HINSTANCE h_instance, int n_cmd_show) {
   CefString(&settings.locales_dir_path).FromWString(exe_dir + L"\\locales");
   // cache_path left empty: no profile data is stored (no passwords, history).
   settings.multi_threaded_message_loop = true;  // CEF runs its own loop thread.
+  // Phase 6: diagnostic logging is OFF by default (no personal data is ever
+  // written). Enable only for troubleshooting with DASK_LOG=1: CEF's own
+  // log goes to <exe dir>\debug.log (rotated by CEF; inspect locally only).
+  wchar_t log_env[8] = {};
+  if (::GetEnvironmentVariableW(L"DASK_LOG", log_env, 8) && log_env[0] == L'1') {
+    CefString(&settings.log_file).FromWString(exe_dir + L"\\debug.log");
+    settings.log_severity = LOGSEVERITY_WARNING;
+    settings.remote_debugging_port = 9222;  // for perf probes (debug only)
+  } else {
+    settings.log_severity = LOGSEVERITY_DISABLE;
+  }
   CefMainArgs main_args(h_instance);
   // The browser process installs the http://dask.ui UI handler.
   CefRefPtr<CefApp> app = CreateDaskApp(exe_dir + L"\\ui");

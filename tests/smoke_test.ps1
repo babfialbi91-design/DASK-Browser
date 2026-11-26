@@ -54,6 +54,14 @@ if (-not $SkipBuild -and $cmake -and $cefRoot) {
 
     Write-Host "--- cmake build (Release) ---"
     & cmake --build $buildDir --config Release --parallel
+    $firstExit = $LASTEXITCODE
+    if ($firstExit -ne 0) {
+        # Transient file-lock failures (antivirus / previous instance holding
+        # chrome_elf.dll) are common on Windows: retry once before failing.
+        Write-Host "build returned $firstExit - retrying once (possible transient file lock)"
+        Start-Sleep -Seconds 5
+        & cmake --build $buildDir --config Release --parallel
+    }
     if ($LASTEXITCODE -ne 0) { Fail "cmake build failed" }
 }
 

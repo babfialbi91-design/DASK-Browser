@@ -62,6 +62,7 @@ dask_finalize_target(dask_cef_app)
 
 # Main executable: browser process, owns the Win32 window.
 add_executable(dask_browser WIN32
+    app/native/dask_browser.rc
     app/native/main.cpp
     app/native/adblock/filter_engine.h
     app/native/adblock/filter_engine.cpp

@@ -225,6 +225,7 @@ class TabManager {
     bool internal = false;  // trusted UI tab
     bool private_flag = false;  // private tab: no history, isolated storage
     bool closing = false;
+    bool hidden = false;  // window visibility mirror (Phase 6 bookkeeping)
     std::wstring title;
     std::wstring url;
     bool loading = false;

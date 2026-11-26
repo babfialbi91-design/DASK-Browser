@@ -10,7 +10,7 @@ import {
   type HistoryItemUi,
 } from '../common/bridge'
 
-type Section = 'general' | 'privacy' | 'profiles' | 'permissions' | 'bookmarks' | 'history' | 'downloads'
+type Section = 'general' | 'privacy' | 'profiles' | 'permissions' | 'bookmarks' | 'history' | 'downloads' | 'about'
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: 'general', label: 'عام' },
@@ -20,6 +20,7 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: 'bookmarks', label: 'المفضلة' },
   { id: 'history', label: 'السجل' },
   { id: 'downloads', label: 'التنزيلات' },
+  { id: 'about', label: 'حول' },
 ]
 
 const ENGINES = [
@@ -483,6 +484,26 @@ function App() {
               حذف آخر 30 يوماً (وما قبله)
             </button>
           </div>
+        </section>
+      )}
+
+      {section === 'about' && (
+        <section>
+          <h2>حول DASK Browser</h2>
+          <p className="privacy-note">
+            DASK Browser الإصدار 1.0.0 — متصفح ويب Windows أصلي على محرك
+            Chromium المضمن عبر CEF (Chromium 158.0.8127.89).
+          </p>
+          <p className="privacy-note">
+            الترخيص: كود المشروع يتبع ملف LICENSE؛ CEF وChromium مرخصان BSD؛
+            EasyList وEasyPrivacy (GPLv3) وPhishing Army (CC0) تُستخدم
+            كبيانات فقط؛ التفاصيل الكاملة في THIRD_PARTY_NOTICES.md المرفق
+            مع الحزمة.
+          </p>
+          <p className="privacy-note">
+            الخصوصية: كل البيانات محلية — لا تتبّع، لا رفع، لا كلمات مرور
+            محفوظة، وقاعدة البيانات في مجلد ملفك الشخصي فقط.
+          </p>
         </section>
       )}
 
