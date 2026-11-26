@@ -126,4 +126,38 @@ class Settings {
   Database* db_;
 };
 
+// ---- Permissions (per-site decisions) --------------------------------------
+
+enum PermissionDecision {
+  kPermissionAsk = 0,   // default: prompt every time
+  kPermissionAllow = 1, // remembered allow
+  kPermissionDeny = 2,  // remembered deny
+};
+
+struct PermissionRow {
+  std::string host;
+  std::string type;  // camera / microphone / geolocation / notifications / clipboard
+  int decision = kPermissionAsk;
+  int64_t updated_at = 0;
+};
+
+class Permissions {
+ public:
+  explicit Permissions(Database* db) : db_(db) {}
+
+  // Stored decision for (host, type); kPermissionAsk when absent.
+  int Get(const std::string& host, const std::string& type,
+          std::string* error);
+  // Upsert. decision must be kPermissionAllow/kPermissionDeny/kPermissionAsk.
+  bool Set(const std::string& host, const std::string& type, int decision,
+           std::string* error);
+  bool List(std::vector<PermissionRow>* out, std::string* error);
+  bool Remove(const std::string& host, const std::string& type,
+              std::string* error);
+  bool ClearAll(std::string* error);
+
+ private:
+  Database* db_;
+};
+
 }  // namespace dask::storage

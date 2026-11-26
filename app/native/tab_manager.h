@@ -30,8 +30,10 @@
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
 #include "include/cef_download_handler.h"
+#include "include/cef_permission_handler.h"
 #include "include/wrapper/cef_message_router.h"
 #include "privacy_settings.h"
+#include "profiles.h"
 #include "storage/database.h"
 #include "storage/stores.h"
 
@@ -69,6 +71,25 @@ struct DownloadUi {
   int state = 0;
   int64_t received = 0;
   int64_t total = -1;
+  bool risky = false;  // executable/script type (Phase 5)
+};
+struct PermissionUi {  // stored per-site decision (profile DB)
+  std::wstring host;
+  std::wstring type;
+  int decision = 0;  // 0 ask / 1 allow / 2 deny
+};
+// Live CEF permission request waiting for the user (Phase 5).
+struct PendingPermission {
+  uint64_t cef_id = 0;   // CEF prompt id (0 for media requests)
+  uint64_t ui_id = 0;    // our queue id used by the bridge response
+  std::wstring origin;
+  std::vector<std::wstring> labels;    // Arabic labels of requested types
+  std::vector<std::string> db_keys;    // permission keys to store on "always"
+  uint32_t media_bits = 0;             // media request bits (media flow only)
+  bool media = false;                  // CefMediaAccessCallback vs prompt cb
+  bool for_private = false;            // private tab: never persist decisions
+  CefRefPtr<CefMediaAccessCallback> media_cb;
+  CefRefPtr<CefPermissionPromptCallback> prompt_cb;
 };
 
 struct SearchEngineConfig {
@@ -137,6 +158,32 @@ class TabManager {
   void SetHistoryEnabled(bool enabled);
   void SetRetentionDays(int days);
   void SetRestoreSession(bool enabled);
+
+  // ---- Permissions & profiles (Phase 5) ----
+  void OnMediaAccessPermission(int64_t tab_id, const std::wstring& origin,
+                               uint32_t requested,
+                               CefRefPtr<CefMediaAccessCallback> callback);
+  bool OnPermissionPrompt(int64_t tab_id, uint64_t prompt_id,
+                          const std::wstring& origin, uint32_t requested,
+                          CefRefPtr<CefPermissionPromptCallback> callback);
+  void DismissPermissionPrompt(uint64_t prompt_id);
+  // action: allowOnce / allow / denyOnce / deny
+  void RespondPermission(uint64_t id, const std::string& action);
+  void SetPermission(const std::string& host, const std::string& type,
+                     int decision);  // 0 ask / 1 allow / 2 deny
+  void ResetPermission(const std::string& host, const std::string& type);
+  ProfileStore* profiles() { return profile_store_.get(); }
+  void AddProfile(const std::string& name);
+  void SwitchProfile(const std::string& id);
+  void DeleteProfile(const std::string& id);
+  void PerformProfileSwitch();  // CEF UI thread, after the last tab closes
+  void QueuePermissionPrompt(
+      uint64_t cef_id, const std::wstring& origin,
+      const std::vector<std::wstring>& labels,
+      const std::vector<std::string>& db_keys, uint32_t media_bits,
+      bool media, bool for_private,
+      CefRefPtr<CefMediaAccessCallback> media_cb,
+      CefRefPtr<CefPermissionPromptCallback> prompt_cb);
 
   // Internal helpers (used by TabClient/DaskQueryHandler via friendship).
   void PostToDb(std::function<void()> fn);
@@ -218,6 +265,12 @@ class TabManager {
   // ---- Privacy / ad blocking (Phase 3) ----
   PrivacySettings privacy_;
   FilterLists lists_;
+
+  // ---- Profiles (Phase 5): isolated directories per user profile ----
+  std::unique_ptr<ProfileStore> profile_store_;
+  CefRefPtr<CefRequestContext> profile_context_;  // active profile's context
+  bool switching_profile_ = false;
+  std::string pending_profile_switch_;
   // Blocked-request counters (session-local), shared between the CEF IO
   // thread (writes) and the CEF UI thread (reads for snapshots).
   std::mutex blocked_mutex_;
@@ -242,11 +295,15 @@ class TabManager {
   std::unique_ptr<storage::History> history_store_;
   std::unique_ptr<storage::Downloads> downloads_store_;
   std::unique_ptr<storage::Settings> settings_store_;
+  std::unique_ptr<storage::Permissions> permissions_store_;
 
   // Read models mirrored to the CEF UI thread (guarded by state_mutex_).
   std::mutex state_mutex_;
   std::vector<BookmarkUi> bookmarks_cache_;
   std::vector<DownloadUi> downloads_cache_;
+  std::vector<PermissionUi> permissions_cache_;
+  std::vector<PendingPermission> permission_prompts_;
+  uint64_t prompt_seq_ = 1;
   std::wstring db_note_;  // human-readable storage problem, if any
 
   // Preferences (CEF UI thread copies; persisted in settings table).

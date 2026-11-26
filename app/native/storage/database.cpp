@@ -132,6 +132,13 @@ bool Database::Migrate(std::string* error) {
       "CREATE TABLE IF NOT EXISTS settings ("
       "  key TEXT PRIMARY KEY,"
       "  value TEXT NOT NULL);",
+      // v1 -> v2: per-site permission decisions (Phase 5).
+      "CREATE TABLE IF NOT EXISTS permissions ("
+      "  host TEXT NOT NULL,"
+      "  type TEXT NOT NULL,"
+      "  decision INTEGER NOT NULL,"
+      "  updated_at INTEGER NOT NULL,"
+      "  PRIMARY KEY (host, type));",
   };
   constexpr int kSteps = sizeof(kMigrations) / sizeof(kMigrations[0]);
 

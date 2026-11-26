@@ -210,6 +210,62 @@ static void TestLooksLikeFilterList() {
   CHECK(!FilterEngine::LooksLikeFilterList(html_page, nullptr));
 }
 
+// Phase 5 helper mirror: domains-only feeds convert to ||host^ rules.
+static std::string DomainsToRulesMirror(const std::string& text) {
+  std::string out;
+  size_t start = 0;
+  while (start <= text.size()) {
+    size_t end = text.find('\n', start);
+    if (end == std::string::npos) end = text.size();
+    std::string line = text.substr(start, end - start);
+    start = end + 1;
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+      line.pop_back();
+    if (!line.empty() && line[0] == '.') line.erase(line.begin());
+    bool valid = !line.empty() && line.size() <= 253;
+    if (valid) {
+      for (char c : line) {
+        const bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                        (c >= 'A' && c <= 'Z') || c == '.' || c == '-' ||
+                        c == '_';
+        if (!ok) {
+          valid = false;
+          break;
+        }
+      }
+    }
+    if (valid) {
+      out += "||";
+      out += line;
+      out += '^';
+    } else if (!line.empty()) {
+      out += "! skipped: ";
+      out += line;
+    }
+    out += '\n';
+  }
+  return out;
+}
+
+static void TestDomainBlocklistConversion() {
+  const std::string feed =
+      "# phishing feed\n"
+      "phishing-example.com\n"
+      ".sub.evil-host.net\n"
+      "not a domain line\n"
+      "valid-host.org\r\n";
+  auto engine = Parse(DomainsToRulesMirror(feed));
+  CHECK(engine->ShouldBlock(MakeReq(L"http://phishing-example.com/x",
+                                   L"example.com", ResourceKind::Other)));
+  CHECK(engine->ShouldBlock(MakeReq(L"http://sub.evil-host.net/x",
+                                   L"example.com", ResourceKind::Other)));
+  CHECK(engine->ShouldBlock(MakeReq(L"http://valid-host.org/x", L"example.com",
+                                   ResourceKind::Other)));
+  CHECK(!engine->ShouldBlock(MakeReq(L"http://unlisted-host.net/x",
+                                   L"unlisted-host.net",
+                                   ResourceKind::Other)));
+}
+
 int main() {
   TestBasicHostBlocking();
   TestLookalikeHost();
@@ -221,6 +277,7 @@ int main() {
   TestUnsupportedAndCosmetic();
   TestInvalidLines();
   TestLooksLikeFilterList();
+  TestDomainBlocklistConversion();
   if (g_failures == 0) {
     std::printf("FILTER ENGINE TESTS PASSED\n");
     return 0;

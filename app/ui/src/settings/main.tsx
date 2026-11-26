@@ -10,10 +10,12 @@ import {
   type HistoryItemUi,
 } from '../common/bridge'
 
-type Section = 'general' | 'privacy' | 'bookmarks' | 'history' | 'downloads'
+type Section = 'general' | 'privacy' | 'profiles' | 'permissions' | 'bookmarks' | 'history' | 'downloads'
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: 'general', label: 'عام' },
+  { id: 'profiles', label: 'الملفات الشخصية' },
+  { id: 'permissions', label: 'الأذونات' },
   { id: 'privacy', label: 'الخصوصية' },
   { id: 'bookmarks', label: 'المفضلة' },
   { id: 'history', label: 'السجل' },
@@ -34,6 +36,8 @@ function App() {
   const [historyQuery, setHistoryQuery] = useState('')
   const [historyRows, setHistoryRows] = useState<HistoryItemUi[]>([])
   const [bookmarkQuery, setBookmarkQuery] = useState('')
+  const [newProfileName, setNewProfileName] = useState('')
+  const [confirmOpen, setConfirmOpen] = useState<number | null>(null)
 
   useEffect(
     () =>
@@ -119,6 +123,119 @@ function App() {
               {engine.label}
             </label>
           ))}
+        </section>
+      )}
+
+      {section === 'profiles' && (
+        <section>
+          <h2>الملفات الشخصية</h2>
+          <p className="privacy-note">
+            كل ملف شخصي له مجلد منفصل تماماً: قاعدة بيانات خاصة (مفضلة، سجل،
+            تنزيلات)، إعدادات، ملفات تعريف ارتباط وذاكرة CEF. التبديل يغلق
+            تبويبات الجلسة الحالية ويستعيد جلسة الملف الشخصي المختار.
+          </p>
+          <ul className="exceptions">
+            {state.profiles.map((prof) => (
+              <li key={prof.id} className="bookmark-row">
+                <strong>{prof.name}</strong>
+                {prof.active && <span className="note"> (نشط)</span>}
+                {!prof.active && (
+                  <span style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      className="btn small"
+                      onClick={() => go({ type: 'switchProfile', id: prof.id })}
+                    >
+                      التبديل إليه
+                    </button>
+                    {state.profiles.length > 1 && (
+                      <button
+                        className="btn small"
+                        onClick={() => go({ type: 'deleteProfile', id: prof.id })}
+                      >
+                        حذف
+                      </button>
+                    )}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+          <div className="btn-row">
+            <input
+              className="search-input"
+              type="text"
+              placeholder="اسم الملف الشخصي الجديد…"
+              aria-label="اسم الملف الشخصي"
+              value={newProfileName}
+              onChange={(e) => setNewProfileName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && newProfileName.trim()) {
+                  go({ type: 'addProfile', name: newProfileName.trim() })
+                  setNewProfileName('')
+                }
+              }}
+            />
+            <button
+              className="btn"
+              disabled={!newProfileName.trim()}
+              onClick={() => {
+                go({ type: 'addProfile', name: newProfileName.trim() })
+                setNewProfileName('')
+              }}
+            >
+              إنشاء ملف شخصي
+            </button>
+          </div>
+        </section>
+      )}
+
+      {section === 'permissions' && (
+        <section>
+          <h2>أذونات المواقع</h2>
+          <p className="privacy-note">
+            كل إذن يبدأ بحالة "اسأل" — تظهر فقاعة في شريط الأدوات عند الطلب.
+            القرارات المحفوظة تخص الملف الشخصي الحالي فقط، ويمكن سحبها في أي
+            وقت. التبويبات الخاصة لا تخزّن قرارات الأذونات.
+          </p>
+          {state.permissions.length === 0 && (
+            <p className="privacy-note">لا قرارات محفوظة بعد.</p>
+          )}
+          <ul className="exceptions">
+            {state.permissions.map((perm) => (
+              <li key={perm.host + ":" + perm.perm} className="bookmark-row">
+                <code>{perm.host}</code>
+                <span>{perm.perm}</span>
+                <span className="note">
+                  {perm.decision === 1 ? 'مسموح' : 'مرفوض'}
+                </span>
+                <button
+                  className="btn small"
+                  onClick={() =>
+                    go({
+                      type: 'setPermission',
+                      host: perm.host,
+                      perm: perm.perm,
+                      decision: perm.decision === 1 ? 2 : 1,
+                    })
+                  }
+                >
+                  {perm.decision === 1 ? 'تحويل إلى رفض' : 'تحويل إلى سماح'}
+                </button>
+                <button
+                  className="btn small"
+                  onClick={() =>
+                    go({
+                      type: 'resetPermission',
+                      host: perm.host,
+                      perm: perm.perm,
+                    })
+                  }
+                >
+                  سحب (إعادة السؤال)
+                </button>
+              </li>
+            ))}
+          </ul>
         </section>
       )}
 
@@ -382,6 +499,30 @@ function App() {
             {state.downloads.map((dl) => (
               <li key={dl.id || dl.filename}>
                 <strong>{dl.filename}</strong>
+                {dl.risky && (
+                  <span className="note warn"> — ⚠ ملف تنفيذي/سكربت: قد يشغّل كوداً على جهازك</span>
+                )}
+                {confirmOpen === dl.id && (
+                  <p className="note warn">
+                    هل تريد فتح هذا الملف فعلاً؟ الملفات التنفيذية قد تكون خطرة.
+                    <button
+                      className="btn small"
+                      style={{ marginRight: 8 }}
+                      onClick={() => {
+                        setConfirmOpen(null)
+                        go({ type: 'openDownload', id: dl.id })
+                      }}
+                    >
+                      نعم، افتح
+                    </button>
+                    <button
+                      className="btn small"
+                      onClick={() => setConfirmOpen(null)}
+                    >
+                      إلغاء
+                    </button>
+                  </p>
+                )}
                 {dl.total > 0 && dl.state === 0 && (
                   <span>
                     {' '}
@@ -397,7 +538,16 @@ function App() {
                   {dl.state === 1 && (
                     <button
                       className="btn small"
-                      onClick={() => go({ type: 'openDownload', id: dl.id })}
+                      onClick={() => {
+                        // Executable/script files require an explicit
+                        // confirmation before they are opened (Phase 5).
+                        if (dl.risky && confirmOpen !== dl.id) {
+                          setConfirmOpen(dl.id)
+                          return
+                        }
+                        setConfirmOpen(null)
+                        go({ type: 'openDownload', id: dl.id })
+                      }}
                     >
                       فتح الملف
                     </button>

@@ -227,6 +227,40 @@ static void TestUniquePath() {
   std::filesystem::remove(a);
 }
 
+static void TestPermissions() {
+  Database db;
+  std::string err;
+  CHECK(db.Open(FreshDbPath("perm.db"), &err));
+  CHECK(db.Migrate(&err));
+  CHECK(SchemaVersion(&db) >= 2);
+  Permissions perms(&db);
+
+  // Absent -> Ask (default deny with prompt).
+  CHECK(perms.Get("example.com", "camera", &err) == kPermissionAsk);
+  // Deny by default for everything unlisted is enforced by the caller;
+  // here we verify the store round-trip.
+  CHECK(perms.Set("example.com", "camera", kPermissionAllow, &err));
+  CHECK(perms.Get("example.com", "camera", &err) == kPermissionAllow);
+  CHECK(perms.Set("example.com", "camera", kPermissionDeny, &err));
+  CHECK(perms.Get("example.com", "camera", &err) == kPermissionDeny);
+  CHECK(perms.Set("site.org", "geolocation", kPermissionAllow, &err));
+  CHECK(perms.Set("site.org", "notifications", kPermissionDeny, &err));
+
+  std::vector<PermissionRow> rows;
+  CHECK(perms.List(&rows, &err));
+  CHECK(rows.size() == 3);
+
+  // Revoke one, reset all.
+  CHECK(perms.Remove("site.org", "geolocation", &err));
+  CHECK(perms.Get("site.org", "geolocation", &err) == kPermissionAsk);
+  CHECK(perms.ClearAll(&err));
+  CHECK(perms.List(&rows, &err));
+  CHECK(rows.empty());
+
+  // Invalid decision is rejected (no silent writes).
+  CHECK(!perms.Set("x.com", "camera", 99, &err));
+}
+
 static void TestCorruptionRecovery() {
   const std::string path = FreshDbPath("corrupt.db");
   std::filesystem::remove(path);
@@ -263,6 +297,7 @@ int main() {
   TestHistory();
   TestDownloads();
   TestSettings();
+  TestPermissions();
   TestFilenameSanitizer();
   TestUniquePath();
   TestCorruptionRecovery();

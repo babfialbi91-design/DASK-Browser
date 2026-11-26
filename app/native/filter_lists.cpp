@@ -155,11 +155,69 @@ std::string ReadFileString(const std::wstring& path) {
                      std::istreambuf_iterator<char>());
 }
 
+// Converts a domains-only blocklist (one bare hostname per line) into
+// network rules (||host^). Comment lines (#) and blanks are kept as comments.
+std::string DomainsToRules(const std::string& text) {
+  std::string out;
+  size_t start = 0;
+  while (start <= text.size()) {
+    size_t end = text.find('\n', start);
+    if (end == std::string::npos) end = text.size();
+    std::string line = text.substr(start, end - start);
+    start = end + 1;
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+      line.pop_back();
+    // Strip a leading dot (subdomain wildcard form).
+    if (!line.empty() && line[0] == '.') line.erase(line.begin());
+    bool valid = !line.empty() && line.size() <= 253;
+    if (valid) {
+      for (char c : line) {
+        const bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                        (c >= 'A' && c <= 'Z') || c == '.' || c == '-' ||
+                        c == '_';
+        if (!ok) {
+          valid = false;
+          break;
+        }
+      }
+    }
+    if (valid) {
+      out += "||";
+      out += line;
+      out += '^';
+    } else if (!line.empty()) {
+      out += "! skipped: ";
+      out += line;  // kept as a comment; the parser ignores it
+    }
+    out += '\n';
+  }
+  return out;
+}
+
+// Sanity check for a downloaded domains-only list: enough valid hostnames.
+bool LooksLikeDomainList(const std::string& text) {
+  if (text.size() < 256 || text.size() > kMaxListBytes) return false;
+  size_t valid_hosts = 0;
+  const std::string converted = DomainsToRules(text);
+  size_t start = 0;
+  while (start < converted.size()) {
+    size_t end = converted.find('\n', start);
+    if (end == std::string::npos) end = converted.size();
+    if (converted.compare(start, 2, "||") == 0) ++valid_hosts;
+    start = end + 1;
+    if (valid_hosts >= 100) return true;
+  }
+  return valid_hosts >= 100;
+}
+
 }  // namespace
 
 const FilterLists::Source FilterLists::kSources[] = {
-    {L"easylist", L"https://easylist.to/easylist/easylist.txt"},
-    {L"easyprivacy", L"https://easylist.to/easylist/easyprivacy.txt"},
+    {L"easylist", L"https://easylist.to/easylist/easylist.txt", false},
+    {L"easyprivacy", L"https://easylist.to/easylist/easyprivacy.txt", false},
+    // Phase 5: phishing-domain blocklist (network-level dangerous-site
+    // protection). Public, actively maintained feed; no invented threat DB.
+    {L"phishing", L"https://phishing.army/download/phishing_army_blocklist_extended.txt", true},
 };
 
 void FilterLists::Initialize(const std::wstring& appdata_dir) {
@@ -214,11 +272,14 @@ void FilterLists::RebuildEngine() {
     const std::string text =
         ReadFileString(dir_ + L"\\" + std::wstring(src.name) + L".txt");
     if (!text.empty()) {
-      combined += text;
+      // Domains-only feeds (phishing blocklists) carry bare hostnames; convert
+      // them to network rules (||host^) before parsing.
+      const std::string normalized = src.domains ? DomainsToRules(text) : text;
+      combined += normalized;
       combined += '\n';
       // Update the per-list accepted-rule count.
       adblock::ParseReport rep;
-      adblock::FilterEngine::Parse(text, &rep);
+      adblock::FilterEngine::Parse(normalized, &rep);
       std::lock_guard<std::mutex> lock(status_mutex_);
       for (FilterListStatus& st : statuses_) {
         if (st.name == src.name) {
@@ -297,7 +358,8 @@ void FilterLists::UpdateAll(std::function<void()> on_done) {
         }
         continue;  // keep the previously stored version
       }
-      if (!adblock::FilterEngine::LooksLikeFilterList(data, nullptr)) {
+      if (src.domains ? !LooksLikeDomainList(data)
+                      : !adblock::FilterEngine::LooksLikeFilterList(data, nullptr)) {
         std::lock_guard<std::mutex> lock(status_mutex_);
         for (FilterListStatus& st : statuses_) {
           if (st.name == src.name) {

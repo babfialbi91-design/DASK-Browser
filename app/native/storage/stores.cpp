@@ -336,4 +336,83 @@ bool Settings::SetInt(const std::string& key, int value, std::string* error) {
   return SetString(key, std::to_string(value), error);
 }
 
+// ---- Permissions -----------------------------------------------------------
+
+int Permissions::Get(const std::string& host, const std::string& type,
+                     std::string* error) {
+  auto stmt = db_->Prepare(
+      "SELECT decision FROM permissions WHERE host = ? AND type = ?");
+  if (!stmt) {
+    if (error) *error = "prepare failed";
+    return kPermissionAsk;
+  }
+  stmt->Bind(1, host).Bind(2, type);
+  if (stmt->Step()) return static_cast<int>(stmt->ColInt(0));
+  if (error && !stmt->error().empty()) *error = stmt->error();
+  return kPermissionAsk;
+}
+
+bool Permissions::Set(const std::string& host, const std::string& type,
+                      int decision, std::string* error) {
+  if (decision != kPermissionAsk && decision != kPermissionAllow &&
+      decision != kPermissionDeny) {
+    if (error) *error = "invalid decision";
+    return false;
+  }
+  auto stmt = db_->Prepare(
+      "INSERT INTO permissions (host, type, decision, updated_at) VALUES (?, ?,"
+      " ?, strftime('%s','now')) ON CONFLICT(host, type) DO UPDATE SET decision"
+      " = excluded.decision, updated_at = excluded.updated_at");
+  if (!stmt) return false;
+  stmt->Bind(1, host).Bind(2, type).Bind(3, decision);
+  if (!stmt->Run()) {
+    if (error) *error = stmt->error();
+    return false;
+  }
+  return true;
+}
+
+bool Permissions::List(std::vector<PermissionRow>* out, std::string* error) {
+  out->clear();
+  auto stmt = db_->Prepare(
+      "SELECT host, type, decision, updated_at FROM permissions ORDER BY host,"
+      " type");
+  if (!stmt) {
+    if (error) *error = "prepare failed";
+    return false;
+  }
+  while (stmt->Step()) {
+    PermissionRow row;
+    row.host = stmt->ColText(0);
+    row.type = stmt->ColText(1);
+    row.decision = static_cast<int>(stmt->ColInt(2));
+    row.updated_at = stmt->ColInt(3);
+    out->push_back(std::move(row));
+  }
+  return true;
+}
+
+bool Permissions::Remove(const std::string& host, const std::string& type,
+                         std::string* error) {
+  auto stmt =
+      db_->Prepare("DELETE FROM permissions WHERE host = ? AND type = ?");
+  if (!stmt) return false;
+  stmt->Bind(1, host).Bind(2, type);
+  if (!stmt->Run()) {
+    if (error) *error = stmt->error();
+    return false;
+  }
+  return true;
+}
+
+bool Permissions::ClearAll(std::string* error) {
+  auto stmt = db_->Prepare("DELETE FROM permissions");
+  if (!stmt) return false;
+  if (!stmt->Run()) {
+    if (error) *error = stmt->error();
+    return false;
+  }
+  return true;
+}
+
 }  // namespace dask::storage

@@ -6,7 +6,9 @@
 #include <shlobj.h>
 #include <shlwapi.h>
 
+#include <algorithm>
 #include <atomic>
+#include <set>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -21,6 +23,7 @@
 #include "storage/download_filename.h"
 
 namespace dask {
+
 namespace {
 
 constexpr wchar_t kDaskUiOrigin[] = L"http://dask.ui/";
@@ -62,6 +65,35 @@ std::wstring WideFromUtf8(const std::string& s) {
   ::MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()),
                         out.data(), n);
   return out;
+}
+
+// Risky download types: an executable/script that would run arbitrary code.
+// Used to require an explicit confirmation before opening the file.
+bool IsRiskyDownloadFilename(const std::wstring& filename) {
+  const wchar_t* risky[] = {L".exe", L".msi", L".bat", L".cmd", L".ps1",
+                            L".scr", L".vbs", L".js",  L".jar", L".com",
+                            L".hta", L".msix", L".appx"};
+  if (filename.empty()) return false;
+  std::wstring lower = filename;
+  for (wchar_t& c : lower) {
+    if (c >= L'A' && c <= L'Z') c += 32;
+  }
+  const size_t dot = lower.find_last_of(L'.');
+  if (dot == std::wstring::npos) return false;
+  const std::wstring ext = lower.substr(dot);
+  for (const wchar_t* r : risky) {
+    if (ext == r) return true;
+  }
+  // Double extension: setup.pdf.exe style - last ext matched above but check
+  // whether an earlier risky extension is embedded as well.
+  size_t prev = lower.find_last_of(L'.', dot - 1);
+  if (prev != std::wstring::npos) {
+    const std::wstring prev_ext = lower.substr(prev);
+    for (const wchar_t* r : risky) {
+      if (prev_ext == r) return true;
+    }
+  }
+  return false;
 }
 
 // Known Downloads folder (created when missing).
@@ -174,6 +206,25 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
     }
     CefRefPtr<CefDictionaryValue> dict = parsed->GetDictionary();
     const std::string type = dict->GetString("type").ToString();
+
+    // Phase 5: explicit IPC allowlist. Anything not listed here is rejected
+    // outright (defense in depth on top of the origin check above).
+    static const std::set<std::string> kAllowedRequests = {
+        "subscribe", "wait", "getState", "navigate", "back", "forward",
+        "reload", "stop", "home", "createTab", "closeTab", "activateTab",
+        "setQuickLinks", "setSearchEngine", "setBlockingEnabled",
+        "setThirdPartyCookies", "setSiteAllowed", "removeSiteException",
+        "clearSiteData", "clearBrowsingData", "updateFilterLists",
+        "toggleBookmark", "removeBookmark", "updateBookmark",
+        "searchHistory", "clearHistory", "setHistoryEnabled",
+        "setRetentionDays", "setRestoreSession", "cancelDownload",
+        "removeDownload", "openDownload", "openDownloadsFolder",
+        "respondPermission", "setPermission", "resetPermission",
+        "addProfile", "switchProfile", "deleteProfile"};
+    if (!kAllowedRequests.count(type)) {
+      callback->Failure(403, "unknown bridge request type");
+      return true;
+    }
 
     if (type == "subscribe" || type == "wait") {
       // Persistent wait channel: keep the callback and deliver on the next
@@ -327,6 +378,23 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
       mgr_->OpenDownload(dict->GetInt("id"));
     } else if (type == "openDownloadsFolder") {
       mgr_->OpenDownloadsFolder();
+    } else if (type == "respondPermission") {
+      mgr_->RespondPermission(
+          static_cast<uint64_t>(dict->GetInt("id")),
+          dict->GetString("action").ToString());
+    } else if (type == "setPermission") {
+      mgr_->SetPermission(dict->GetString("host").ToString(),
+                          dict->GetString("perm").ToString(),
+                          dict->GetInt("decision"));
+    } else if (type == "resetPermission") {
+      mgr_->ResetPermission(dict->GetString("host").ToString(),
+                            dict->GetString("perm").ToString());
+    } else if (type == "addProfile") {
+      mgr_->AddProfile(dict->GetString("name").ToString());
+    } else if (type == "switchProfile") {
+      mgr_->SwitchProfile(dict->GetString("id").ToString());
+    } else if (type == "deleteProfile") {
+      mgr_->DeleteProfile(dict->GetString("id").ToString());
     } else if (type == "setQuickLinks") {
       CefRefPtr<CefListValue> list = dict->GetList("links");
       if (list && list->GetSize() <= 24) {
@@ -484,6 +552,7 @@ class TabClient : public CefClient,
                   public CefDownloadHandler,
                   public CefLoadHandler,
                   public CefLifeSpanHandler,
+                  public CefPermissionHandler,
                   public CefRequestHandler {
  public:
   TabClient(TabManager* mgr, int64_t tab_id) : mgr_(mgr), tab_id_(tab_id) {}
@@ -539,6 +608,46 @@ class TabClient : public CefClient,
 
   // CefDownloadHandler (Phase 4). Methods run on the browser UI thread.
   CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
+
+  // CefPermissionHandler (Phase 5): camera/microphone and the generic
+  // permission prompt flow. Default (unhandled) = deny with Alloy style.
+  CefRefPtr<CefPermissionHandler> GetPermissionHandler() override {
+    return this;
+  }
+
+  bool OnRequestMediaAccessPermission(
+      CefRefPtr<CefBrowser> browser,
+      CefRefPtr<CefFrame> frame,
+      const CefString& requesting_origin,
+      uint32_t requested_permissions,
+      CefRefPtr<CefMediaAccessCallback> callback) override {
+    (void)browser;
+    (void)frame;
+    mgr_->OnMediaAccessPermission(tab_id_, requesting_origin.ToWString(),
+                                  requested_permissions, callback);
+    return true;  // decided asynchronously via TabManager
+  }
+
+  bool OnShowPermissionPrompt(
+      CefRefPtr<CefBrowser> browser,
+      uint64_t prompt_id,
+      const CefString& requesting_origin,
+      uint32_t requested_permissions,
+      CefRefPtr<CefPermissionPromptCallback> callback) override {
+    (void)browser;
+    return mgr_->OnPermissionPrompt(tab_id_, prompt_id,
+                                    requesting_origin.ToWString(),
+                                    requested_permissions, callback);
+  }
+
+  void OnDismissPermissionPrompt(
+      CefRefPtr<CefBrowser> browser,
+      uint64_t prompt_id,
+      cef_permission_request_result_t result) override {
+    (void)browser;
+    (void)result;
+    mgr_->DismissPermissionPrompt(prompt_id);
+  }
 
   bool OnBeforeDownload(
       CefRefPtr<CefBrowser> browser,
@@ -662,8 +771,13 @@ void TabManager::Initialize(HWND main_hwnd) {
   engine_ = kDefaultEngine;
   quick_links_ = kDefaultLinks;
 
-  // Phase 3: privacy settings and filter lists.
-  privacy_.Load(AppDataDir());
+  // Phase 5: user profiles. The active profile owns dask.db, session.json,
+  // privacy.json and a CEF cache under its own directory.
+  profile_store_ = std::make_unique<ProfileStore>(AppDataDir());
+  profile_store_->Load();
+
+  // Phase 3: privacy settings and filter lists (per profile / shared cache).
+  privacy_.Load(profile_store_->privacy_path());
   lists_.Initialize(AppDataDir());
 
   CefMessageRouterConfig config;
@@ -677,8 +791,7 @@ void TabManager::Start() {
   {
     storage::Database prefs_db;
     std::string db_err;
-    if (prefs_db.Open(Utf8FromWide(std::wstring(AppDataDir()) + L"\\dask.db"),
-                      &db_err) &&
+    if (prefs_db.Open(Utf8FromWide(profile_store_->db_path()), &db_err) &&
         prefs_db.Migrate(&db_err)) {
       storage::Settings prefs(&prefs_db);
       prefs.GetBool("restoreSession", true, &restore_session_, &db_err);
@@ -688,8 +801,7 @@ void TabManager::Start() {
   }
 
   // Restore the persisted session (read on this thread, applied on CEF's).
-  std::ifstream file(std::wstring(AppDataDir()) + L"\\" + kSessionFile,
-                     std::ios::binary);
+  std::ifstream file(profile_store_->session_path(), std::ios::binary);
   std::string json((std::istreambuf_iterator<char>(file)),
                    std::istreambuf_iterator<char>());
   bool has_session = false;
@@ -833,6 +945,16 @@ void TabManager::CreateTab(std::wstring url, bool private_tab) {
             CefRequestContextSettings(), nullptr);
       }
       context = private_context_;
+    } else {
+      // Phase 5: the active profile gets an isolated CEF request context
+      // (cookies/cache under profiles/<id>/cef_cache).
+      if (!profile_context_) {
+        CefRequestContextSettings ctx_settings;
+        CefString(&ctx_settings.cache_path)
+            .FromWString(profile_store_->cef_cache_dir());
+        profile_context_ = CefRequestContext::CreateContext(ctx_settings, nullptr);
+      }
+      context = profile_context_;
     }
     CefString url_str;
     url_str.FromWString(url);
@@ -1008,8 +1130,17 @@ void TabManager::OnBrowserClosed(int64_t tab_id) {
       });
     }
   } else if (tabs_.empty()) {
-    // Closing the last tab closes the window (Chrome-like behavior).
-    ::PostMessageW(main_hwnd_, WM_CLOSE, 0, 0);
+    if (switching_profile_) {
+      // Profile switch: every content tab is gone — swap storage on the CEF
+      // UI thread and open the new profile's tabs (no window close).
+      PerformProfileSwitch();
+    } else {
+      // Closing the last tab closes the window (Chrome-like behavior).
+      ::PostMessageW(main_hwnd_, WM_CLOSE, 0, 0);
+    }
+  } else if (switching_profile_ && tabs_.size() == 1 && tabs_[0].id == 0) {
+    // Only the UI browser (tab 0) remains: the switch can proceed.
+    PerformProfileSwitch();
   } else {
     bool active_exists = false;
     for (const Tab& tab : tabs_) {
@@ -1175,10 +1306,59 @@ std::string TabManager::BuildStateJson(bool focus_address) {
       item->SetInt("state", downloads_cache_[i].state);
       item->SetInt("received", static_cast<int>(downloads_cache_[i].received));
       item->SetInt("total", static_cast<int>(downloads_cache_[i].total));
+      item->SetBool("risky", downloads_cache_[i].risky);
       dl_list->SetDictionary(i, item);
     }
   }
   root_dict->SetList("downloads", dl_list);
+
+  // ---- Profiles & permissions (Phase 5) ----
+  CefRefPtr<CefListValue> prof_list = CefListValue::Create();
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    const ProfileStore* store = profile_store_.get();
+    int idx = 0;
+    for (const ProfileInfo& p : store->profiles()) {
+      CefRefPtr<CefDictionaryValue> item = CefDictionaryValue::Create();
+      item->SetString("id", p.id);
+      item->SetString("name", p.name);
+      item->SetBool("active", p.id == store->active_id());
+      prof_list->SetDictionary(idx++, item);
+    }
+  }
+  root_dict->SetList("profiles", prof_list);
+
+  CefRefPtr<CefListValue> perm_list = CefListValue::Create();
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    int idx = 0;
+    for (const PermissionUi& p : permissions_cache_) {
+      CefRefPtr<CefDictionaryValue> item = CefDictionaryValue::Create();
+      item->SetString("host", p.host);
+      item->SetString("type", p.type);
+      item->SetInt("decision", p.decision);
+      perm_list->SetDictionary(idx++, item);
+    }
+  }
+  root_dict->SetList("permissions", perm_list);
+
+  CefRefPtr<CefDictionaryValue> pending_perm;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    if (!permission_prompts_.empty()) {
+      const PendingPermission& pp = permission_prompts_.front();
+      pending_perm = CefDictionaryValue::Create();
+      pending_perm->SetInt("id", static_cast<int>(pp.ui_id));
+      pending_perm->SetString("origin", pp.origin);
+      CefRefPtr<CefListValue> types = CefListValue::Create();
+      for (size_t t = 0; t < pp.labels.size(); ++t) {
+        types->SetString(t, pp.labels[t]);
+      }
+      pending_perm->SetList("types", types);
+      pending_perm->SetBool("media", pp.media);
+    }
+  }
+  if (pending_perm) root_dict->SetDictionary("permissionPrompt", pending_perm);
 
   root_dict->SetBool("restoreSession", restore_session_);
   root_dict->SetBool("historyEnabled", history_enabled_);
@@ -1304,7 +1484,7 @@ void TabManager::SaveSession() {
   root->SetDictionary(root_dict);
   const std::string json =
       CefWriteJSON(root, cef_json_writer_options_t(0)).ToString();
-  std::ofstream file(std::wstring(AppDataDir()) + L"\\" + kSessionFile,
+  std::ofstream file(profile_store_->session_path(),
                      std::ios::binary | std::ios::trunc);
   file.write(json.data(), static_cast<std::streamsize>(json.size()));
 }
@@ -1411,8 +1591,7 @@ void TabManager::UpdateFilterLists() {
 
 void TabManager::StartDatabase() {
   // CEF UI thread. The DB thread owns the SQLite connection.
-  const std::string db_path =
-      Utf8FromWide(std::wstring(AppDataDir()) + L"\\dask.db");
+  const std::string db_path = Utf8FromWide(profile_store_->db_path());
   db_quit_ = false;
   db_thread_ = std::thread([this, db_path]() {
     db_ = std::make_unique<storage::Database>();
@@ -1438,6 +1617,7 @@ void TabManager::StartDatabase() {
       history_store_ = std::make_unique<storage::History>(db_.get());
       downloads_store_ = std::make_unique<storage::Downloads>(db_.get());
       settings_store_ = std::make_unique<storage::Settings>(db_.get());
+      permissions_store_ = std::make_unique<storage::Permissions>(db_.get());
 
       std::string db_err;
       settings_store_->GetBool("restoreSession", true, &restore_session_,
@@ -1481,6 +1661,7 @@ void TabManager::StartDatabase() {
     history_store_.reset();
     downloads_store_.reset();
     settings_store_.reset();
+    permissions_store_.reset();
     db_.reset();
   });
 }
@@ -1506,18 +1687,21 @@ void TabManager::PostToDb(std::function<void()> fn) {
 // DB thread: rebuild the UI-facing mirrors and hand them to the CEF UI
 // thread.
 void TabManager::RefreshStorageCachesOnDb() {
-  if (!bookmarks_store_ || !downloads_store_) return;
+  if (!bookmarks_store_ || !downloads_store_ || !permissions_store_) return;
   std::string err;
   std::vector<storage::Bookmark> bm_rows;
   bookmarks_store_->Search("", &bm_rows, &err);
   std::vector<storage::DownloadItemRow> dl_rows;
   downloads_store_->List(30, &dl_rows, &err);
+  std::vector<storage::PermissionRow> perm_rows;
+  permissions_store_->List(&perm_rows, &err);
   if (!err.empty()) {
     std::lock_guard<std::mutex> lock(state_mutex_);
     db_note_ = L"خطأ في قاعدة البيانات: " + WideFromUtf8(err);
   }
   PostToCef([this, bm_rows = std::move(bm_rows),
-             dl_rows = std::move(dl_rows)]() {
+             dl_rows = std::move(dl_rows),
+             perm_rows = std::move(perm_rows)]() {
     std::vector<BookmarkUi> bm;
     for (const storage::Bookmark& row : bm_rows) {
       BookmarkUi item;
@@ -1536,12 +1720,22 @@ void TabManager::RefreshStorageCachesOnDb() {
       item.state = row.state;
       item.received = row.received;
       item.total = row.total;
+      item.risky = IsRiskyDownloadFilename(WideFromUtf8(row.filename));
       dl.push_back(std::move(item));
+    }
+    std::vector<PermissionUi> perms;
+    for (const storage::PermissionRow& row : perm_rows) {
+      PermissionUi item;
+      item.host = WideFromUtf8(row.host);
+      item.type = WideFromUtf8(row.type);
+      item.decision = row.decision;
+      perms.push_back(std::move(item));
     }
     {
       std::lock_guard<std::mutex> lock(state_mutex_);
       bookmarks_cache_ = std::move(bm);
       downloads_cache_ = std::move(dl);
+      permissions_cache_ = std::move(perms);
     }
     PushUiEvent();
   });
@@ -1672,6 +1866,395 @@ void TabManager::SetRestoreSession(bool enabled) {
   });
 }
 
+// ---- Permissions & profiles (Phase 5) --------------------------------------
+
+namespace {
+
+// Permission-type bit -> DB key + Arabic display label. First mapped bit
+// decides the DB row for a mixed request.
+struct PermissionTypeEntry {
+  uint32_t bit;
+  const char* key;
+  const wchar_t* label;
+};
+
+const PermissionTypeEntry kPermissionTypes[] = {
+    {CEF_PERMISSION_TYPE_MIC_STREAM, "microphone", L"الميكروفون"},
+    {CEF_PERMISSION_TYPE_CAMERA_PAN_TILT_ZOOM, "camera", L"الكاميرا (تحكم)"},
+    {CEF_PERMISSION_TYPE_CAMERA_STREAM, "camera", L"الكاميرا"},
+    {CEF_PERMISSION_TYPE_GEOLOCATION, "geolocation", L"الموقع الجغرافي"},
+    {CEF_PERMISSION_TYPE_NOTIFICATIONS, "notifications", L"الإشعارات"},
+    {CEF_PERMISSION_TYPE_CLIPBOARD, "clipboard", L"الحافظة"},
+    {CEF_PERMISSION_TYPE_WINDOW_MANAGEMENT, "windowManagement", L"إدارة النوافذ"},
+    {CEF_PERMISSION_TYPE_POINTER_LOCK, "pointerLock", L"قفل المؤشر"},
+    {CEF_PERMISSION_TYPE_IDLE_DETECTION, "idleDetection", L"كشف الخمول"},
+    {CEF_PERMISSION_TYPE_LOCAL_FONTS, "localFonts", L"الخطوط المحلية"},
+};
+
+// Media-request bits -> DB keys (device capture only; desktop capture is
+// not granted by this browser).
+std::vector<std::string> MediaDbKeys(uint32_t requested) {
+  std::vector<std::string> keys;
+  if (requested & CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE)
+    keys.push_back("microphone");
+  if (requested & CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE)
+    keys.push_back("camera");
+  return keys;
+}
+
+uint32_t MediaBitsForKeys(const std::vector<std::string>& keys) {
+  uint32_t bits = 0;
+  for (const std::string& key : keys) {
+    if (key == "microphone")
+      bits |= CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE;
+    else if (key == "camera")
+      bits |= CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE;
+  }
+  return bits;
+}
+
+std::vector<std::string> PromptDbKeys(uint32_t requested) {
+  std::vector<std::string> keys;
+  for (const PermissionTypeEntry& t : kPermissionTypes) {
+    if (requested & t.bit) {
+      if (std::find(keys.begin(), keys.end(), t.key) == keys.end())
+        keys.push_back(t.key);
+    }
+  }
+  return keys;
+}
+
+std::vector<std::wstring> PromptLabels(uint32_t requested) {
+  std::vector<std::wstring> labels;
+  for (const PermissionTypeEntry& t : kPermissionTypes) {
+    if (requested & t.bit) labels.push_back(t.label);
+  }
+  return labels;
+}
+
+}  // namespace
+
+void TabManager::OnMediaAccessPermission(
+    int64_t tab_id, const std::wstring& origin, uint32_t requested,
+    CefRefPtr<CefMediaAccessCallback> callback) {
+  const std::wstring host = adblock::UrlHost(origin);
+  if (host.empty() || requested == 0 || MediaDbKeys(requested).empty()) {
+    callback->Cancel();
+    return;
+  }
+  bool private_tab = false;
+  for (const Tab& tab : tabs_) {
+    if (tab.id == tab_id) {
+      private_tab = tab.private_flag;
+      break;
+    }
+  }
+  const bool priv = private_tab;
+  PostToDb([this, host, origin, requested, priv, callback]() {
+    const std::vector<std::string> keys = MediaDbKeys(requested);
+    int allow_count = 0;
+    int deny_count = 0;
+    std::vector<std::string> ask_keys;
+    if (permissions_store_) {
+      std::string err;
+      for (const std::string& key : keys) {
+        const int d = permissions_store_->Get(Utf8FromWide(host), key, &err);
+        if (d == storage::kPermissionAllow) ++allow_count;
+        else if (d == storage::kPermissionDeny) ++deny_count;
+        else ask_keys.push_back(key);
+      }
+    } else {
+      ask_keys = keys;
+    }
+    PostToCef([this, origin, requested, ask_keys, priv, callback, deny_count]() {
+      if (deny_count > 0) {
+        callback->Cancel();
+        return;
+      }
+      if (ask_keys.empty()) {
+        callback->Continue(requested);  // all stored decisions allow
+        return;
+      }
+      // Needs the user: queue the prompt (media flow, CEF prompt id 0).
+      QueuePermissionPrompt(0, origin, PromptLabels(requested), ask_keys,
+                            requested, true, priv, callback, nullptr);
+    });
+  });
+}
+
+bool TabManager::OnPermissionPrompt(
+    int64_t tab_id, uint64_t prompt_id, const std::wstring& origin,
+    uint32_t requested,
+    CefRefPtr<CefPermissionPromptCallback> callback) {
+  const std::wstring host = adblock::UrlHost(origin);
+  if (host.empty() || PromptDbKeys(requested).empty()) return false;
+  bool private_tab = false;
+  for (const Tab& tab : tabs_) {
+    if (tab.id == tab_id) {
+      private_tab = tab.private_flag;
+      break;
+    }
+  }
+  const bool priv = private_tab;
+  PostToDb([this, host, origin, requested, priv, prompt_id, callback]() {
+    const std::vector<std::string> keys = PromptDbKeys(requested);
+    int deny_count = 0;
+    std::vector<std::string> ask_keys;
+    if (permissions_store_) {
+      std::string err;
+      for (const std::string& key : keys) {
+        const int d = permissions_store_->Get(Utf8FromWide(host), key, &err);
+        if (d == storage::kPermissionDeny) ++deny_count;
+        else if (d != storage::kPermissionAllow) ask_keys.push_back(key);
+      }
+    } else {
+      ask_keys = keys;
+    }
+    PostToCef([this, origin, requested, ask_keys, priv, prompt_id, callback, deny_count]() {
+      if (deny_count > 0) {
+        callback->Continue(CEF_PERMISSION_RESULT_DENY);
+        return;
+      }
+      if (ask_keys.empty()) {
+        callback->Continue(CEF_PERMISSION_RESULT_ACCEPT);
+        return;
+      }
+      QueuePermissionPrompt(prompt_id, origin, PromptLabels(requested),
+                            ask_keys, 0, false, priv, nullptr, callback);
+    });
+  });
+  return true;
+}
+
+void TabManager::DismissPermissionPrompt(uint64_t prompt_id) {
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    for (size_t i = 0; i < permission_prompts_.size(); ++i) {
+      if (permission_prompts_[i].cef_id == prompt_id) {
+        permission_prompts_.erase(permission_prompts_.begin() + i);
+        break;
+      }
+    }
+  }
+  PushUiEvent();
+}
+
+void TabManager::QueuePermissionPrompt(
+    uint64_t cef_id, const std::wstring& origin,
+    const std::vector<std::wstring>& labels,
+    const std::vector<std::string>& db_keys, uint32_t media_bits,
+    bool media, bool for_private,
+    CefRefPtr<CefMediaAccessCallback> media_cb,
+    CefRefPtr<CefPermissionPromptCallback> prompt_cb) {
+  PendingPermission prompt;
+  prompt.cef_id = cef_id;
+  prompt.ui_id = prompt_seq_++;
+  prompt.origin = origin;
+  prompt.labels = labels;
+  prompt.db_keys = db_keys;
+  prompt.media_bits = media_bits;
+  prompt.media = media;
+  prompt.for_private = for_private;
+  prompt.media_cb = media_cb;
+  prompt.prompt_cb = prompt_cb;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    // Keep the queue small: one origin may replace its older pending prompt.
+    for (auto it = permission_prompts_.begin();
+         it != permission_prompts_.end(); ++it) {
+      if (it->origin == origin && it->media == media) {
+        permission_prompts_.erase(it);
+        break;
+      }
+    }
+    permission_prompts_.push_back(std::move(prompt));
+  }
+  PushUiEvent();
+}
+
+void TabManager::RespondPermission(uint64_t ui_id, const std::string& action) {
+  PendingPermission prompt;
+  bool found = false;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    for (size_t i = 0; i < permission_prompts_.size(); ++i) {
+      if (permission_prompts_[i].ui_id == ui_id) {
+        prompt = permission_prompts_[i];
+        permission_prompts_.erase(permission_prompts_.begin() + i);
+        found = true;
+        break;
+      }
+    }
+  }
+  if (!found) return;
+
+  const bool allow = action == "allow" || action == "allowOnce";
+  const bool remember = action == "allow" || action == "deny";
+  if (prompt.media_cb) {
+    if (allow) {
+      prompt.media_cb->Continue(prompt.media_bits);
+    } else {
+      prompt.media_cb->Cancel();
+    }
+  } else if (prompt.prompt_cb) {
+    prompt.prompt_cb->Continue(allow ? CEF_PERMISSION_RESULT_ACCEPT
+                                     : CEF_PERMISSION_RESULT_DENY);
+  }
+  if (remember && !prompt.for_private) {
+    const int decision =
+        allow ? storage::kPermissionAllow : storage::kPermissionDeny;
+    PostToDb([this, host = Utf8FromWide(adblock::UrlHost(prompt.origin)),
+              keys = prompt.db_keys, decision]() {
+      if (!permissions_store_ || host.empty()) return;
+      std::string err;
+      for (const std::string& key : keys) {
+        permissions_store_->Set(host, key, decision, &err);
+      }
+      RefreshStorageCachesOnDb();
+    });
+  }
+  PushUiEvent();
+}
+
+void TabManager::SetPermission(const std::string& host,
+                               const std::string& type, int decision) {
+  PostToDb([this, host, type, decision]() {
+    if (!permissions_store_) return;
+    std::string err;
+    if (decision == storage::kPermissionAsk) {
+      permissions_store_->Remove(host, type, &err);
+    } else {
+      permissions_store_->Set(host, type, decision, &err);
+    }
+    RefreshStorageCachesOnDb();
+  });
+}
+
+void TabManager::ResetPermission(const std::string& host,
+                                 const std::string& type) {
+  PostToDb([this, host, type]() {
+    if (!permissions_store_) return;
+    std::string err;
+    permissions_store_->Remove(host, type, &err);
+    RefreshStorageCachesOnDb();
+  });
+}
+
+// ---- Profiles (Phase 5) ----------------------------------------------------
+
+void TabManager::AddProfile(const std::string& name) {
+  std::string id;
+  std::string err;
+  profile_store_->CreateProfile(name, &id, &err);
+  PushUiEvent();
+}
+
+void TabManager::SwitchProfile(const std::string& id) {
+  if (profile_store_->active_id() == id || switching_profile_) return;
+  for (const ProfileInfo& p : profile_store_->profiles()) {
+    if (p.id != id) continue;
+    // Persist the current session into the OLD profile, close every content
+    // tab, then swap storage on the CEF UI thread (PerformProfileSwitch).
+    SaveSession();
+    pending_profile_switch_ = id;
+    switching_profile_ = true;
+    std::vector<int64_t> ids;
+    for (const Tab& tab : tabs_) {
+      if (tab.id != 0 && !tab.closing) ids.push_back(tab.id);
+    }
+    for (int64_t tab_id : ids) CloseTab(tab_id);
+    return;
+  }
+}
+
+void TabManager::DeleteProfile(const std::string& id) {
+  profile_store_->DeleteProfile(id, nullptr);
+  PushUiEvent();
+}
+
+// Runs on the CEF UI thread when every content tab of the old profile is
+// gone (OnBrowserClosed sees only the UI browser left).
+void TabManager::PerformProfileSwitch() {
+  switching_profile_ = false;
+  const std::string id = pending_profile_switch_;
+  pending_profile_switch_.clear();
+  if (id.empty()) return;
+
+  StopDatabase();
+  profile_context_ = nullptr;  // old cache directory is left untouched
+  std::string err;
+  if (profile_store_->SwitchProfile(id, &err)) {
+    privacy_.Load(profile_store_->privacy_path());
+  }
+  // Restore the new profile's session (same logic as Start()).
+  {
+    storage::Database prefs_db;
+    std::string db_err;
+    restore_session_ = true;
+    history_enabled_ = true;
+    retention_days_ = 90;
+    if (prefs_db.Open(Utf8FromWide(profile_store_->db_path()), &db_err) &&
+        prefs_db.Migrate(&db_err)) {
+      storage::Settings prefs(&prefs_db);
+      prefs.GetBool("restoreSession", true, &restore_session_, &db_err);
+      prefs.GetBool("historyEnabled", true, &history_enabled_, &db_err);
+      prefs.GetInt("historyRetentionDays", 90, &retention_days_, &db_err);
+    }
+  }
+  bool has_session = false;
+  size_t restored_tabs = 0;
+  std::ifstream file(profile_store_->session_path(), std::ios::binary);
+  std::string json((std::istreambuf_iterator<char>(file)),
+                   std::istreambuf_iterator<char>());
+  if (!json.empty()) {
+    CefRefPtr<CefValue> parsed = CefParseJSON(json, cef_json_parser_options_t(0));
+    if (parsed && parsed->GetType() == VTYPE_DICTIONARY) {
+      has_session = true;
+      CefRefPtr<CefDictionaryValue> dict = parsed->GetDictionary();
+      const std::wstring engine_id = dict->GetString("engineId").ToWString();
+      if (engine_id == L"google" || engine_id == L"bing" ||
+          engine_id == L"duckduckgo" || engine_id == L"custom") {
+        engine_.id = engine_id;
+        engine_.custom = dict->GetString("engineCustom").ToWString();
+      }
+      CefRefPtr<CefListValue> links = dict->GetList("quickLinks");
+      if (links) {
+        std::vector<QuickLink> restored;
+        for (size_t i = 0; i < links->GetSize() && restored.size() < 24; ++i) {
+          CefRefPtr<CefDictionaryValue> item = links->GetDictionary(i);
+          if (!item) continue;
+          QuickLink link;
+          link.title = item->GetString("title").ToWString();
+          link.url = item->GetString("url").ToWString();
+          if (IsHttpUrl(link.url) && !link.title.empty()) {
+            restored.push_back(link);
+          }
+        }
+        if (!restored.empty()) quick_links_ = std::move(restored);
+      }
+      CefRefPtr<CefListValue> tabs = dict->GetList("tabs");
+      if (tabs && restore_session_) {
+        for (size_t i = 0;
+             i < tabs->GetSize() && i < static_cast<size_t>(kMaxTabs); ++i) {
+          CefRefPtr<CefDictionaryValue> item = tabs->GetDictionary(i);
+          if (!item) continue;
+          const std::wstring url = item->GetString("url").ToWString();
+          const bool internal = url == kNewTabUrl ||
+                                url.rfind(kDaskUiOrigin, 0) == 0;
+          if (!internal && !IsHttpUrl(url)) continue;
+          CreateTab(url);
+          ++restored_tabs;
+        }
+      }
+    }
+  }
+  if (!has_session || restored_tabs == 0) {
+    CreateTab(kNewTabUrl);
+  }
+  StartDatabase();
+  PushUiEvent();
+}
+
 // ---- Downloads (CEF UI thread) ----------------------------------------------
 
 bool TabManager::OnBeforeDownload(int64_t tab_id,
@@ -1698,6 +2281,7 @@ bool TabManager::OnBeforeDownload(int64_t tab_id,
       ui.id = 0;
       ui.filename = WideFromUtf8(name);
       ui.state = storage::kDownloadActive;
+      ui.risky = IsRiskyDownloadFilename(WideFromUtf8(name));
       downloads_cache_.push_back(std::move(ui));
     });
   } else {

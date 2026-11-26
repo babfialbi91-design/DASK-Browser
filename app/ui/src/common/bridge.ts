@@ -24,6 +24,26 @@ export interface DownloadUi {
   state: number // 0 active, 1 complete, 2 canceled, 3 failed
   received: number
   total: number // -1 = unknown
+  risky?: boolean // executable/script type — opening requires confirmation
+}
+
+export interface ProfileUi {
+  id: string
+  name: string
+  active: boolean
+}
+
+export interface PermissionUi {
+  host: string
+  perm: string // camera / microphone / geolocation / notifications / ...
+  decision: number // 0 ask, 1 allow, 2 deny
+}
+
+export interface PermissionPromptUi {
+  id: number
+  origin: string
+  types: string[]
+  media: boolean
 }
 
 export interface HistoryItemUi {
@@ -82,6 +102,9 @@ export interface AppState {
   historyEnabled: boolean
   retentionDays: number
   dbNote?: string
+  profiles: ProfileUi[]
+  permissions: PermissionUi[]
+  permissionPrompt?: PermissionPromptUi
 }
 
 // Requests the UI is allowed to send. Tab-scoped actions without an explicit
@@ -121,6 +144,13 @@ export type Request =
   | { type: 'removeDownload'; id: number }
   | { type: 'openDownload'; id: number }
   | { type: 'openDownloadsFolder' }
+  // ---- Permissions & profiles (Phase 5) ----
+  | { type: 'respondPermission'; id: number; action: 'allowOnce' | 'allow' | 'denyOnce' | 'deny' }
+  | { type: 'setPermission'; host: string; perm: string; decision: 0 | 1 | 2 }
+  | { type: 'resetPermission'; host: string; perm: string }
+  | { type: 'addProfile'; name: string }
+  | { type: 'switchProfile'; id: string }
+  | { type: 'deleteProfile'; id: string }
 
 interface CefQueryRequest {
   request: string
@@ -209,6 +239,9 @@ function coerceState(value: unknown): AppState {
     historyEnabled: parsed.historyEnabled ?? true,
     retentionDays: parsed.retentionDays ?? 90,
     dbNote: parsed.dbNote,
+    profiles: parsed.profiles ?? [],
+    permissions: parsed.permissions ?? [],
+    permissionPrompt: parsed.permissionPrompt,
   }
 }
 

@@ -74,6 +74,8 @@ add_executable(dask_browser WIN32
     app/native/browser_window.cpp
     app/native/tab_manager.h
     app/native/tab_manager.cpp
+    app/native/profiles.h
+    app/native/profiles.cpp
     app/native/dask_scheme.h
     app/native/dask_scheme.cpp)
 target_include_directories(dask_browser PRIVATE ${CEF_ROOT} app/native)

@@ -243,8 +243,57 @@ function App() {
 
         {loading && <div className="loading-bar" aria-hidden="true" />}
       </div>
+
+      {state?.permissionPrompt ? (
+        (() => {
+          const prompt = state.permissionPrompt
+          return (
+        <div className="perm-bubble" role="dialog" aria-label="طلب إذن">
+          <div className="perm-text">
+            يطلب <strong>{hostOf(prompt.origin)}</strong>{' '}
+            {prompt.types.join(' و')}:
+          </div>
+          <div className="perm-actions">
+            <button
+              className="perm-btn allow"
+              onClick={() => go({ type: 'respondPermission', id: prompt.id, action: 'allow' })}
+            >
+              سماح دائماً
+            </button>
+            <button
+              className="perm-btn"
+              onClick={() => go({ type: 'respondPermission', id: prompt.id, action: 'allowOnce' })}
+            >
+              سماح مرة واحدة
+            </button>
+            <button
+              className="perm-btn"
+              onClick={() => go({ type: 'respondPermission', id: prompt.id, action: 'denyOnce' })}
+            >
+              رفض
+            </button>
+            <button
+              className="perm-btn deny"
+              onClick={() => go({ type: 'respondPermission', id: prompt.id, action: 'deny' })}
+            >
+              رفض دائماً
+            </button>
+          </div>
+        </div>
+          )
+        })()
+      ) : null}
     </div>
   )
+}
+
+function hostOf(origin: string): string {
+  try {
+    const url = new URL(origin)
+    return url.host || origin
+  } catch {
+    return origin
+  }
 }
 
 createRoot(document.getElementById('root')!).render(<App />)

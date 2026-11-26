@@ -48,9 +48,10 @@ class FilterLists {
   struct Source {
     const wchar_t* name;
     const wchar_t* url;
+    bool domains;  // one bare hostname per line (converted to ||host^ rules)
   };
   static const Source kSources[];
-  static constexpr size_t kSourceCount = 2;
+  static constexpr size_t kSourceCount = 3;
 
   bool LoadStored(const Source& src);  // parse from disk into the engine
   void RebuildEngine();                // parse all stored files, swap engine
