@@ -20,6 +20,7 @@
 #include "include/cef_values.h"
 #include "include/wrapper/cef_message_router.h"
 #include "adblock/site_util.h"
+#include "dask_scheme.h"
 #include "storage/download_filename.h"
 
 namespace dask {
@@ -794,7 +795,7 @@ void TabManager::Start() {
     if (prefs_db.Open(Utf8FromWide(profile_store_->db_path()), &db_err) &&
         prefs_db.Migrate(&db_err)) {
       storage::Settings prefs(&prefs_db);
-      prefs.GetBool("restoreSession", true, &restore_session_, &db_err);
+      prefs.GetBool("restoreSession", false, &restore_session_, &db_err);
       prefs.GetBool("historyEnabled", true, &history_enabled_, &db_err);
       prefs.GetInt("historyRetentionDays", 90, &retention_days_, &db_err);
     }
@@ -943,6 +944,9 @@ void TabManager::CreateTab(std::wstring url, bool private_tab) {
       if (!private_context_) {
         private_context_ = CefRequestContext::CreateContext(
             CefRequestContextSettings(), nullptr);
+        // Custom contexts need their own dask.ui registration; the global
+        // factory only covers the default context.
+        RegisterUiSchemeHandlerOnContext(private_context_);
       }
       context = private_context_;
     } else {
@@ -953,6 +957,7 @@ void TabManager::CreateTab(std::wstring url, bool private_tab) {
         CefString(&ctx_settings.cache_path)
             .FromWString(profile_store_->cef_cache_dir());
         profile_context_ = CefRequestContext::CreateContext(ctx_settings, nullptr);
+        RegisterUiSchemeHandlerOnContext(profile_context_);
       }
       context = profile_context_;
     }
@@ -1620,7 +1625,7 @@ void TabManager::StartDatabase() {
       permissions_store_ = std::make_unique<storage::Permissions>(db_.get());
 
       std::string db_err;
-      settings_store_->GetBool("restoreSession", true, &restore_session_,
+      settings_store_->GetBool("restoreSession", false, &restore_session_,
                                &db_err);
       settings_store_->GetBool("historyEnabled", true, &history_enabled_,
                                &db_err);
@@ -2196,7 +2201,7 @@ void TabManager::PerformProfileSwitch() {
     if (prefs_db.Open(Utf8FromWide(profile_store_->db_path()), &db_err) &&
         prefs_db.Migrate(&db_err)) {
       storage::Settings prefs(&prefs_db);
-      prefs.GetBool("restoreSession", true, &restore_session_, &db_err);
+      prefs.GetBool("restoreSession", false, &restore_session_, &db_err);
       prefs.GetBool("historyEnabled", true, &history_enabled_, &db_err);
       prefs.GetInt("historyRetentionDays", 90, &retention_days_, &db_err);
     }

@@ -13,6 +13,7 @@
 #include <string>
 
 #include "include/cef_base.h"
+#include "include/cef_request_context.h"
 #include "include/cef_scheme.h"
 
 namespace dask {
@@ -24,5 +25,12 @@ constexpr wchar_t kUiHost[] = L"dask.ui";
 // Installs the UI handler factory after context initialization (browser
 // process only). |ui_dir| is the directory holding the built React bundle.
 void InstallUiSchemeHandler(const std::wstring& ui_dir);
+
+// Registers the UI handler on an EXPLICIT request context (per-profile or
+// private). The global CefRegisterSchemeHandlerFactory only covers the
+// default context; custom contexts need their own registration, otherwise
+// http://dask.ui escapes to DNS (Phase 5 regression fix).
+void RegisterUiSchemeHandlerOnContext(
+    CefRefPtr<CefRequestContext> context);
 
 }  // namespace dask

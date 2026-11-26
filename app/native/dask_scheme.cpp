@@ -131,11 +131,24 @@ class UiSchemeFactory : public CefSchemeHandlerFactory {
 
 }  // namespace
 
+// Bundle directory remembered by InstallUiSchemeHandler for per-context
+// registrations (browser process; read on the CEF UI thread only).
+std::wstring g_ui_dir;
+
 void InstallUiSchemeHandler(const std::wstring& ui_dir) {
+  // Remember the bundle directory for per-context registration (Phase 5).
+  g_ui_dir = ui_dir;
   // Intercept the reserved host on the standard http scheme. Requests to any
   // other host fall through to the default network handling.
   CefRegisterSchemeHandlerFactory("http", kUiHost,
                                   new UiSchemeFactory(ui_dir));
+}
+
+void RegisterUiSchemeHandlerOnContext(
+    CefRefPtr<CefRequestContext> context) {
+  if (!context) return;
+  context->RegisterSchemeHandlerFactory("http", kUiHost,
+                                        new UiSchemeFactory(g_ui_dir));
 }
 
 }  // namespace dask

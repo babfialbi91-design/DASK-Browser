@@ -307,7 +307,7 @@ class TabManager {
   std::wstring db_note_;  // human-readable storage problem, if any
 
   // Preferences (CEF UI thread copies; persisted in settings table).
-  bool restore_session_ = true;
+  bool restore_session_ = false;
   bool history_enabled_ = true;
   int retention_days_ = 90;
 
