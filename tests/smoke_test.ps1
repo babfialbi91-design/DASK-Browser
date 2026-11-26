@@ -86,6 +86,16 @@ else { Fail "missing ui bundle file: ui/newtab.html" }
 if (Test-Path (Join-Path $uiDir "assets")) {
     Pass "ui bundle: assets/ directory"
 } else { Fail "missing ui bundle: assets/ directory" }
+if (Test-Path (Join-Path $uiDir "settings.html")) { Pass "ui bundle: settings.html" }
+else { Fail "missing ui bundle file: ui/settings.html" }
+
+# 6. Filter engine unit tests (Phase 3)
+$testExe = Join-Path $binDir "dask_filter_tests.exe"
+if (Test-Path $testExe) {
+    & $testExe
+    if ($LASTEXITCODE -eq 0) { Pass "filter engine tests" }
+    else { Fail "filter engine tests failed" }
+} else { Fail "missing dask_filter_tests.exe (build target dask_filter_tests)" }
 
 Write-Host ""
 if ($failures.Count -eq 0) {

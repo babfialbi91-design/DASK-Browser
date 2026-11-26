@@ -10,10 +10,12 @@
 #include <sstream>
 
 #include "include/cef_parser.h"
+#include "include/cef_cookie.h"
 #include "include/cef_request_handler.h"
 #include "include/cef_task.h"
 #include "include/cef_values.h"
 #include "include/wrapper/cef_message_router.h"
+#include "adblock/site_util.h"
 
 namespace dask {
 namespace {
@@ -179,14 +181,44 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
       std::wstring url = dict->GetString("url").ToWString();
       if (url.empty() || url == kNewTabUrl) {
         url = kNewTabUrl;
-      } else if (!IsHttpUrl(url)) {
-        url = kNewTabUrl;  // only http(s) targets are accepted here
+      } else if (!IsHttpUrl(url) && url.rfind(kDaskUiOrigin, 0) != 0) {
+        url = kNewTabUrl;  // only http(s) / internal UI targets are accepted
       }
       mgr_->CreateTab(url);
     } else if (type == "closeTab") {
       mgr_->CloseTab(dict->GetInt("tabId"));
     } else if (type == "activateTab") {
       mgr_->ActivateTab(dict->GetInt("tabId"));
+    } else if (type == "setBlockingEnabled") {
+      mgr_->privacy_.set_blocking_enabled(dict->GetBool("enabled"));
+      mgr_->privacy_.Save();
+      mgr_->PushUiEvent();
+    } else if (type == "setThirdPartyCookies") {
+      mgr_->privacy_.set_block_third_party_cookies(dict->GetBool("enabled"));
+      mgr_->privacy_.Save();
+      mgr_->PushUiEvent();
+    } else if (type == "setSiteAllowed") {
+      std::wstring host = dict->GetString("host").ToWString();
+      host = adblock::UrlHost(host);
+      if (!host.empty()) {
+        mgr_->privacy_.SetSiteAllowed(host, dict->GetBool("allowed"));
+        mgr_->privacy_.Save();
+        mgr_->PushUiEvent();
+      }
+    } else if (type == "removeSiteException") {
+      std::wstring host = dict->GetString("host").ToWString();
+      host = adblock::UrlHost(host);
+      if (!host.empty()) {
+        mgr_->privacy_.RemoveSiteException(host);
+        mgr_->privacy_.Save();
+        mgr_->PushUiEvent();
+      }
+    } else if (type == "clearSiteData") {
+      mgr_->ClearCookiesFor(dict->GetString("host").ToWString());
+    } else if (type == "clearBrowsingData") {
+      mgr_->ClearAllCookies();
+    } else if (type == "updateFilterLists") {
+      mgr_->UpdateFilterLists();
     } else if (type == "setQuickLinks") {
       CefRefPtr<CefListValue> list = dict->GetList("links");
       if (list && list->GetSize() <= 24) {
@@ -244,6 +276,101 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
 // TabClient: per-browser CEF client for content tabs and the UI browser.
 // ---------------------------------------------------------------------------
 
+// Per-request resource handler: ad filtering + third-party cookie policy.
+// Created per request on the IO thread via GetResourceRequestHandler.
+class DaskResourceHandler : public CefResourceRequestHandler,
+                            public CefCookieAccessFilter {
+ public:
+  DaskResourceHandler(TabManager* mgr, int64_t tab_id,
+                      std::wstring first_party)
+      : mgr_(mgr), tab_id_(tab_id), first_party_(std::move(first_party)) {}
+
+  // CefResourceRequestHandler (IO thread).
+  ReturnValue OnBeforeResourceLoad(CefRefPtr<CefBrowser> browser,
+                                   CefRefPtr<CefFrame> frame,
+                                   CefRefPtr<CefRequest> request,
+                                   CefRefPtr<CefCallback> callback) override {
+    (void)browser;
+    (void)frame;
+    (void)callback;
+    const std::wstring url = request->GetURL().ToWString();
+    if (ShouldCheck(url)) {
+      std::string matched;
+      if (mgr_->ShouldBlockRequest(url, first_party_,
+                                   KindOf(request->GetResourceType()),
+                                   &matched)) {
+        mgr_->OnRequestBlocked(tab_id_);
+        return RV_CANCEL;
+      }
+    }
+    return RV_CONTINUE;
+  }
+
+  CefRefPtr<CefCookieAccessFilter> GetCookieAccessFilter(
+      CefRefPtr<CefBrowser> browser,
+      CefRefPtr<CefFrame> frame,
+      CefRefPtr<CefRequest> request) override {
+    (void)browser;
+    (void)frame;
+    (void)request;
+    return this;
+  }
+
+  // CefCookieAccessFilter (IO thread).
+  bool CanSendCookie(CefRefPtr<CefBrowser> browser,
+                     CefRefPtr<CefFrame> frame,
+                     CefRefPtr<CefRequest> request,
+                     const CefCookie& cookie) override {
+    (void)browser;
+    (void)frame;
+    (void)cookie;
+    return mgr_->CookieAllowed(adblock::UrlHost(request->GetURL().ToWString()),
+                               first_party_);
+  }
+
+  bool CanSaveCookie(CefRefPtr<CefBrowser> browser,
+                     CefRefPtr<CefFrame> frame,
+                     CefRefPtr<CefRequest> request,
+                     CefRefPtr<CefResponse> response,
+                     const CefCookie& cookie) override {
+    (void)browser;
+    (void)frame;
+    (void)response;
+    (void)cookie;
+    return mgr_->CookieAllowed(adblock::UrlHost(request->GetURL().ToWString()),
+                               first_party_);
+  }
+
+ private:
+  IMPLEMENT_REFCOUNTING(DaskResourceHandler);
+  DISALLOW_COPY_AND_ASSIGN(DaskResourceHandler);
+
+  // Only http(s) web requests with a known first-party site are candidates;
+  // internal UI pages and special schemes are always allowed.
+  bool ShouldCheck(const std::wstring& url) const {
+    if (first_party_.empty()) return false;
+    return url.rfind(L"http://", 0) == 0 || url.rfind(L"https://", 0) == 0;
+  }
+
+  static adblock::ResourceKind KindOf(CefRequest::ResourceType t) {
+    switch (t) {
+      case RT_SCRIPT: return adblock::ResourceKind::Script;
+      case RT_IMAGE: return adblock::ResourceKind::Image;
+      case RT_STYLESHEET: return adblock::ResourceKind::Stylesheet;
+      case RT_SUB_FRAME: return adblock::ResourceKind::Subdocument;
+      case RT_XHR: return adblock::ResourceKind::XmlHttpRequest;
+      case RT_MEDIA: return adblock::ResourceKind::Media;
+      case RT_FONT_RESOURCE: return adblock::ResourceKind::Font;
+      case RT_OBJECT: return adblock::ResourceKind::Object;
+      default: return adblock::ResourceKind::Other;
+    }
+  }
+
+  TabManager* mgr_;
+  int64_t tab_id_;
+  std::wstring first_party_;  // top-level site host for this tab
+};
+
 class TabClient : public CefClient,
                   public CefDisplayHandler,
                   public CefLoadHandler,
@@ -276,6 +403,29 @@ class TabClient : public CefClient,
     (void)is_redirect;
     mgr_->router()->OnBeforeBrowse(browser, frame);
     return false;  // allow the navigation
+  }
+
+  // CefRequestHandler (Phase 3): attach the ad-block + cookie filter to every
+  // request of this tab. Main-frame document loads are never blocked.
+  CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(
+      CefRefPtr<CefBrowser> browser,
+      CefRefPtr<CefFrame> frame,
+      CefRefPtr<CefRequest> request,
+      bool is_navigation,
+      bool is_download,
+      const CefString& request_initiator,
+      bool& disable_default_handling) override {
+    (void)browser;
+    (void)frame;
+    (void)is_navigation;
+    (void)is_download;
+    (void)request_initiator;
+    (void)disable_default_handling;
+    if (request->GetResourceType() == RT_MAIN_FRAME) {
+      return nullptr;  // documents always load
+    }
+    return new DaskResourceHandler(mgr_, tab_id_,
+                                   mgr_->TabSiteHost(tab_id_));
   }
 
   // CefDisplayHandler
@@ -379,6 +529,10 @@ void TabManager::Initialize(HWND main_hwnd) {
   engine_ = kDefaultEngine;
   quick_links_ = kDefaultLinks;
 
+  // Phase 3: privacy settings and filter lists.
+  privacy_.Load(AppDataDir());
+  lists_.Initialize(AppDataDir());
+
   CefMessageRouterConfig config;
   router_ = CefMessageRouterBrowserSide::Create(config);
   router_->AddHandler(new DaskQueryHandler(this), false);
@@ -425,7 +579,8 @@ void TabManager::Start() {
           CefRefPtr<CefDictionaryValue> item = tabs->GetDictionary(i);
           if (!item) continue;
           const std::wstring url = item->GetString("url").ToWString();
-          const bool internal = (url == kNewTabUrl);
+          const bool internal = url == kNewTabUrl ||
+                                url.rfind(kDaskUiOrigin, 0) == 0;
           if (!internal && !IsHttpUrl(url)) continue;
           CreateTab(url);  // thread-safe; queues work for the CEF UI thread.
           ++restored_tabs;
@@ -488,7 +643,8 @@ void TabManager::RequestCloseAll() {
 void TabManager::CreateTab(std::wstring url) {
   PostToCef([this, url]() {
     if (closing_all_ || tabs_.size() >= static_cast<size_t>(kMaxTabs)) return;
-    const bool internal = (url == kNewTabUrl);
+    const bool internal = url == kNewTabUrl ||
+                          url.rfind(kDaskUiOrigin, 0) == 0;
 
     // Ask the Win32 thread for a host window. The Win32 thread never blocks
     // on us, so this SendMessage cannot deadlock.
@@ -522,6 +678,11 @@ void TabManager::CreateTab(std::wstring url) {
                                   nullptr);
 
     tabs_.push_back(std::move(tab));
+    {
+      std::lock_guard<std::mutex> lock(blocked_mutex_);
+      tab_site_[id] = internal ? std::wstring() : adblock::UrlHost(url);
+      tab_blocked_[id] = 0;
+    }
     SetActive(&tabs_.back());
     SaveSession();
     PushUiEvent();
@@ -660,6 +821,11 @@ void TabManager::OnBrowserClosed(int64_t tab_id) {
   PostToWin(main_hwnd_, [hwnd = main_hwnd_, tab_id]() {
     ::PostMessageW(hwnd, WM_DASK_DESTROY_HOST, static_cast<WPARAM>(tab_id), 0);
   });
+  {
+    std::lock_guard<std::mutex> lock(blocked_mutex_);
+    tab_site_.erase(tab_id);
+    tab_blocked_.erase(tab_id);
+  }
 
   if (tab_id == 0) {
     ui_browser_ = nullptr;
@@ -713,7 +879,13 @@ void TabManager::OnAddressChanged(int64_t tab_id, const std::wstring& url) {
   for (Tab& tab : tabs_) {
     if (tab.id == tab_id) {
       tab.url = url;
-      tab.internal = tab.internal && url == kNewTabUrl;
+      tab.internal = tab.internal && url.rfind(kDaskUiOrigin, 0) == 0;
+      // New page load: per-tab blocked counter restarts.
+      {
+        std::lock_guard<std::mutex> lock(blocked_mutex_);
+        tab_blocked_[tab_id] = 0;
+        tab_site_[tab_id] = tab.internal ? std::wstring() : adblock::UrlHost(url);
+      }
       break;
     }
   }
@@ -829,6 +1001,56 @@ std::string TabManager::BuildStateJson(bool focus_address) {
   }
   root_dict->SetList("quickLinks", links);
 
+  // ---- Privacy / ad blocking state (Phase 3) ----
+  CefRefPtr<CefDictionaryValue> privacy = CefDictionaryValue::Create();
+  privacy->SetBool("enabled", privacy_.blocking_enabled());
+  privacy->SetBool("thirdPartyCookies", privacy_.block_third_party_cookies());
+  CefRefPtr<CefListValue> exceptions = CefListValue::Create();
+  for (const auto& [host, allowed] : privacy_.SiteExceptions()) {
+    CefRefPtr<CefDictionaryValue> item = CefDictionaryValue::Create();
+    item->SetString("host", host);
+    item->SetBool("allowed", allowed);
+    AppendDict(exceptions, item);
+  }
+  privacy->SetList("siteExceptions", exceptions);
+  CefRefPtr<CefListValue> list_items = CefListValue::Create();
+  const std::vector<FilterListStatus> statuses = lists_.Statuses();
+  for (size_t i = 0; i < statuses.size(); ++i) {
+    CefRefPtr<CefDictionaryValue> item = CefDictionaryValue::Create();
+    item->SetString("name", statuses[i].name);
+    item->SetString("url", statuses[i].url);
+    item->SetInt("rules", static_cast<int>(statuses[i].rules));
+    item->SetString("updated", statuses[i].updated);
+    item->SetString("status", statuses[i].status);
+    list_items->SetDictionary(i, item);
+  }
+  privacy->SetList("lists", list_items);
+  privacy->SetBool("updating", lists_.updating());
+
+  CefRefPtr<CefDictionaryValue> blocked = CefDictionaryValue::Create();
+  CefRefPtr<CefDictionaryValue> tab_counts = CefDictionaryValue::Create();
+  CefRefPtr<CefDictionaryValue> site_counts = CefDictionaryValue::Create();
+  {
+    std::lock_guard<std::mutex> lock(blocked_mutex_);
+    blocked->SetInt("total", blocked_total_);
+    for (const auto& [id, count] : tab_blocked_) {
+      tab_counts->SetInt(std::to_string(id), count);
+    }
+    for (const auto& [host, count] : site_blocked_) {
+      site_counts->SetInt(host, count);
+    }
+  }
+  privacy->SetDictionary("blocked", blocked);
+  privacy->SetDictionary("tabBlockedCounts", tab_counts);
+  privacy->SetDictionary("siteBlockedCounts", site_counts);
+
+  // Per-site context for the shield button (active tab).
+  const std::wstring active_site = TabSiteHost(active_tab_id_);
+  privacy->SetString("activeSite", active_site);
+  privacy->SetBool("activeSiteAllowed",
+                   !active_site.empty() && privacy_.IsSiteAllowed(active_site));
+  root_dict->SetDictionary("privacy", privacy);
+
   if (focus_address) root_dict->SetBool("focusAddress", true);
 
   CefRefPtr<CefValue> root = CefValue::Create();
@@ -891,6 +1113,89 @@ void TabManager::GetLayout(std::vector<int64_t>& order, int64_t& active_id) {
   order = layout_order_;
   active_id = layout_active_;
   ::LeaveCriticalSection(&layout_lock_);
+}
+
+// ---- Privacy / ad blocking (Phase 3) ---------------------------------------
+
+std::wstring TabManager::TabSiteHost(int64_t tab_id) {
+  // Thread-safe: reads the io_state_ mirror maintained on the CEF UI thread.
+  std::lock_guard<std::mutex> lock(blocked_mutex_);
+  const auto it = tab_site_.find(tab_id);
+  return it == tab_site_.end() ? std::wstring() : it->second;
+}
+
+bool TabManager::ShouldBlockRequest(const std::wstring& url,
+                                    const std::wstring& first_party,
+                                    adblock::ResourceKind kind,
+                                    std::string* rule) {
+  // CEF IO thread.
+  if (!privacy_.blocking_enabled() || first_party.empty()) return false;
+  if (privacy_.IsSiteAllowed(first_party)) return false;
+  const auto engine = lists_.engine();
+  if (!engine) return false;
+
+  adblock::RequestInfo req;
+  req.url.resize(url.size());
+  for (size_t i = 0; i < url.size(); ++i) {
+    req.url[i] = (url[i] >= L'A' && url[i] <= L'Z') ? url[i] - L'A' + L'a'
+                                                    : url[i];
+  }
+  req.host = adblock::UrlHost(url);
+  req.first_party = first_party;
+  req.kind = kind;
+  req.third_party = !adblock::SameSiteApprox(req.host, first_party);
+  if (!engine->ShouldBlock(req, rule)) return false;
+
+  std::lock_guard<std::mutex> lock(blocked_mutex_);
+  ++blocked_total_;
+  ++site_blocked_[first_party];
+  return true;
+}
+
+void TabManager::OnRequestBlocked(int64_t tab_id) {
+  // CEF IO thread. Per-tab counter; the snapshot is pushed on the next
+  // load-state change to avoid spamming the UI with an event per request.
+  std::lock_guard<std::mutex> lock(blocked_mutex_);
+  ++tab_blocked_[tab_id];
+}
+
+bool TabManager::CookieAllowed(const std::wstring& request_host,
+                               const std::wstring& first_party) const {
+  // CEF IO thread via the cookie access filter.
+  if (first_party.empty()) return true;
+  if (!privacy_.block_third_party_cookies()) return true;
+  return adblock::SameSiteApprox(request_host, first_party);
+}
+
+void TabManager::ClearCookiesFor(const std::wstring& site) {
+  // CEF UI thread.
+  CefRefPtr<CefCookieManager> manager = CefCookieManager::GetGlobalManager(nullptr);
+  if (!manager) return;
+  const std::wstring host = adblock::UrlHost(site);
+  const std::wstring scheme = host.empty() ? std::wstring() : L"http://" + host;
+  const std::wstring scheme_s =
+      host.empty() ? std::wstring() : L"https://" + host;
+  manager->DeleteCookies(scheme, L"", nullptr);
+  manager->DeleteCookies(scheme_s, L"", nullptr);
+  manager->FlushStore(nullptr);
+}
+
+void TabManager::ClearAllCookies() {
+  // CEF UI thread. In-memory profile (cache_path is empty), so cookies are
+  // the only persisted site data to clear.
+  CefRefPtr<CefCookieManager> manager = CefCookieManager::GetGlobalManager(nullptr);
+  if (!manager) return;
+  manager->DeleteCookies(L"", L"", nullptr);
+  manager->FlushStore(nullptr);
+}
+
+void TabManager::UpdateFilterLists() {
+  // CEF UI thread. PushUiEvent when the background update finishes so the
+  // settings page shows the new statuses.
+  lists_.UpdateAll([this]() {
+    PushUiEvent();
+  });
+  PushUiEvent();  // reflect the "loading" status right away
 }
 
 }  // namespace dask

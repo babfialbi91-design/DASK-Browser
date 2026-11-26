@@ -15,13 +15,19 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "adblock/filter_engine.h"
+#include "filter_lists.h"
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
 #include "include/wrapper/cef_message_router.h"
+#include "privacy_settings.h"
 
 namespace dask {
 
@@ -84,6 +90,23 @@ class TabManager {
   void OnAddressChanged(int64_t tab_id, const std::wstring& url);
   void OnLoadingChanged(int64_t tab_id, bool loading);
 
+  // ---- Called by TabClient on the CEF IO thread (Phase 3) ----
+  // Returns true when the request must be blocked. |first_party| is the
+  // top-level site host of the tab.
+  bool ShouldBlockRequest(const std::wstring& url,
+                          const std::wstring& first_party,
+                          adblock::ResourceKind kind, std::string* rule);
+  void OnRequestBlocked(int64_t tab_id);
+  // Cookies: third-party cookie send/save policy.
+  bool CookieAllowed(const std::wstring& request_host,
+                     const std::wstring& first_party) const;
+  // Clear persisted site data (cookies) for one host or everything.
+  void ClearCookiesFor(const std::wstring& site);   // CEF UI thread
+  void ClearAllCookies();                           // CEF UI thread
+  void UpdateFilterLists();                         // CEF UI thread
+  // Site the user is browsing (top-level host of the tab, CEF UI thread).
+  std::wstring TabSiteHost(int64_t tab_id);
+
   // ---- Wiring for TabClient (CEF UI thread) ----
   CefRefPtr<CefMessageRouterBrowserSide> router() const { return router_; }
   int64_t NewTabId() { return next_tab_id_++; }
@@ -136,6 +159,19 @@ class TabManager {
   // All pages with a pending "wait" query get every state event.
   std::map<int64_t, CefRefPtr<CefMessageRouterBrowserSide::Callback>> waiters_;
   bool queued_focus_address_ = false;
+
+  // ---- Privacy / ad blocking (Phase 3) ----
+  PrivacySettings privacy_;
+  FilterLists lists_;
+  // Blocked-request counters (session-local), shared between the CEF IO
+  // thread (writes) and the CEF UI thread (reads for snapshots).
+  std::mutex blocked_mutex_;
+  std::map<int64_t, int> tab_blocked_;   // tab id -> count (per page load)
+  std::map<std::wstring, int> site_blocked_;  // site host -> session count
+  int blocked_total_ = 0;
+  // tab id -> top-level site host ("" for internal pages); written on the
+  // CEF UI thread, read on the IO thread for request filtering.
+  std::map<int64_t, std::wstring> tab_site_;
 
   friend class DaskQueryHandler;
   friend class TabClient;

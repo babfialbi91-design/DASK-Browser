@@ -1,9 +1,10 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// Two HTML entry points served inside CEF:
-//   index.html  -> the browser toolbar (tab strip + navigation bar)
-//   newtab.html -> the New Tab page shown in content tabs
+// Three HTML entry points served inside CEF:
+//   index.html    -> the browser toolbar (tab strip + navigation bar)
+//   newtab.html   -> the New Tab page shown in content tabs
+//   settings.html -> privacy & ad-blocking settings page
 export default defineConfig({
   plugins: [react()],
   base: './',
@@ -14,6 +15,7 @@ export default defineConfig({
       input: {
         index: 'index.html',
         newtab: 'newtab.html',
+        settings: 'settings.html',
       },
     },
   },

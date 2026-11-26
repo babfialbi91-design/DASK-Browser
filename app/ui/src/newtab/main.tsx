@@ -113,11 +113,24 @@ function App() {
           className={`nt-btn${showSettings ? ' on' : ''}`}
           aria-expanded={showSettings}
           onClick={() => {
-            setShowSettings(!showSettings)
-            setEditing(false)
+            if (showSettings) {
+              setShowSettings(false)
+            } else {
+              // Inline section: search engine + shortcuts to full settings.
+              setShowSettings(true)
+              setEditing(false)
+            }
           }}
         >
           الإعدادات
+        </button>
+        <button
+          className="nt-btn"
+          onClick={() =>
+            go({ type: 'createTab', url: 'http://dask.ui/settings.html' })
+          }
+        >
+          الخصوصية
         </button>
       </div>
 

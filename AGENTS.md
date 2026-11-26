@@ -21,9 +21,16 @@ tests/            smoke_test.ps1
 
 ## واجهة المستخدم وجسر IPC (المرحلة 2+)
 - الواجهة تشتغل داخل CEF نفسها على **`http://dask.ui/index.html`** (interception عبر `CefRegisterSchemeHandlerFactory`، الملفات تُقدَّم من مجلد `ui/` بجانب الـ exe فقط — ممنوع path traversal).
-- جسر واحد عبر **CefMessageRouter** (`window.cefQuery`). أنواع الطلبات: `getState`/`wait` (قناة الحالة: كل صفحة تملك استعلام `wait` خاصاً بها، لا خانة مشتركة — لا تتراجع عن هذا التصميم)، `navigate`، `back`، `forward`، `reload`، `stop`، `home`، `createTab`، `closeTab`، `activateTab`، `setQuickLinks`، `setSearchEngine`.
-- **الأمان:** الطلبات مقبولة فقط من متصفح شريط الأدوات (tab_id=0) أو صفحة داخلية تبدأ بـ `http://dask.ui/`. المحتوى الويب العادي يرفض بـ 403. `createTab` يقبل http(s) فقط، و`setQuickLinks` يرفض الروابط غير http.
+- جسر واحد عبر **CefMessageRouter** (`window.cefQuery`). أنواع الطلبات: `getState`/`wait` (قناة الحالة: كل صفحة تملك استعلام `wait` خاصاً بها، لا خانة مشتركة — لا تتراجع عن هذا التصميم)، `navigate`، `back`، `forward`، `reload`، `stop`، `home`، `createTab`، `closeTab`، `activateTab`، `setQuickLinks`، `setSearchEngine`، وأفعال الخصوصية: `setBlockingEnabled`، `setThirdPartyCookies`، `setSiteAllowed`، `removeSiteException`، `clearSiteData`، `clearBrowsingData`، `updateFilterLists`.
+- **الأمان:** الطلبات مقبولة فقط من متصفح شريط الأدوات (tab_id=0) أو صفحة داخلية تبدأ بـ `http://dask.ui/`. المحتوى الويب العادي يرفض بـ 403. `createTab` يقبل http(s) أو عناوين `dask.ui` فقط، و`setQuickLinks` يرفض الروابط غير http.
 - لا تخزين كلمات مرور ولا محفوظات دائم؛ الجلسة (روابط التبويبات + المحرك + الاختصارات) في `%LOCALAPPDATA%\DaskBrowser\session.json` فقط.
+
+## الخصوصية وحجب الإعلانات (المرحلة 3+)
+- محرك الفلترة في `app/native/adblock/filter_engine.*`: شبكة فقط (لا cosmetic)؛ القواعد غير المدعومة تُتجاهل بأمان. اختباراته في `tests/filter_engine_test.cpp` (هدف `dask_filter_tests`) — **أضف اختباراً لأي سلوك جديد في المحرك**.
+- القرار بالحجب يُتخذ على **CEF IO thread** (DaskResourceHandler)؛ عدّادات الحجب محمية بـ `blocked_mutex_`. لا تلمس `tabs_` من IO thread — استخدم خريطة `tab_site_` المحمية.
+- القوائم في `%LOCALAPPDATA%\DaskBrowser\filters\` مع `meta.json`؛ التحديث ذرّي (temp+MoveFileEx) والفاشل يُبقي النسخة السابقة. المصادر في `FilterLists::kSources`.
+- ملفات الحالة: `session.json` + `privacy.json` (إعدادات الخصوصية والاستثناءات). لا تضف أي تجميع بيانات أو telemetry.
+- تحميل الصفحة الرئيسي (RT_MAIN_FRAME) لا يُحجب أبداً.
 
 ## قواعد العمل
 1. **الإغلاق:** اتبع ترتيب CEF الإلزامي: `CloseBrowser(true)` → انتظار `OnBeforeClose` → إنهاء حلقة الرسائل → `CefShutdown()`. لا تستدعِ CefShutdown بينما المتصفح حي.
@@ -43,4 +50,4 @@ powershell -ExecutionPolicy Bypass -File tests\smoke_test.ps1
 ```
 
 ## المرحلة الحالية فقط
-Phase 2 (Browser UI) مكتملة: تبويبات، شريط أدوات RTL، صفحة New Tab، اختصارات لوحة مفاتيح، جسر IPC. المرحلة التالية (الخصوصية وحجب الإعلانات) لا تبدأ إلا بطلب صريح من المستخدم.
+المرحلات 1 و2 و3 مكتملة (أساس، واجهة تبويبات، خصوصية وحجب). المرحلة التالية لا تبدأ إلا بطلب صريح من المستخدم.

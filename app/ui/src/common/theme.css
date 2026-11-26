@@ -174,6 +174,129 @@ input:focus-visible,
   fill: currentColor;
 }
 
+.nav-btn.shield {
+  position: relative;
+  color: var(--accent);
+}
+
+.nav-btn.shield.off {
+  color: var(--muted);
+}
+
+.shield-badge {
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 9px;
+  line-height: 15px;
+  text-align: center;
+  font-weight: 700;
+}
+
+/* ---- Privacy settings page (dask.ui/settings.html) ---- */
+.settings-root {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 40px 24px 60px;
+}
+
+.settings-root h1 {
+  color: var(--accent);
+  font-size: 26px;
+  margin: 0 0 8px;
+}
+
+.settings-root h2 {
+  font-size: 18px;
+  margin: 34px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-root h3 {
+  font-size: 14px;
+  margin: 18px 0 8px;
+  color: var(--muted);
+}
+
+.privacy-note,
+.note {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 10px 0;
+  line-height: 1.6;
+  cursor: pointer;
+}
+
+.toggle-row input {
+  margin-top: 4px;
+}
+
+.lists,
+.exceptions {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+
+.lists li,
+.exceptions li {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.list-url {
+  color: var(--muted);
+  font-size: 11px;
+  direction: ltr;
+  text-align: left;
+}
+
+.btn {
+  background: var(--panel-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn.small {
+  padding: 4px 10px;
+  font-size: 11px;
+  margin-right: 8px;
+}
+
+.btn-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .address-box {
   flex: 1;
   min-width: 80px;

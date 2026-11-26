@@ -20,12 +20,39 @@ export interface SearchEngine {
   custom: string // format string with %s, used when id === 'custom'
 }
 
+export interface SiteException {
+  host: string
+  allowed: boolean
+}
+
+export interface FilterListStatus {
+  name: string
+  url: string
+  rules: number
+  updated: string
+  status: string // 'ok' | 'loading' | 'error: ...' | 'not loaded'
+}
+
+export interface PrivacyState {
+  enabled: boolean
+  thirdPartyCookies: boolean
+  siteExceptions: SiteException[]
+  lists: FilterListStatus[]
+  updating: boolean
+  blocked: { total: number }
+  tabBlockedCounts: Record<string, number>
+  siteBlockedCounts: Record<string, number>
+  activeSite: string
+  activeSiteAllowed: boolean
+}
+
 export interface AppState {
   tabs: TabState[]
   activeTabId: number
   searchEngine: SearchEngine
   quickLinks: QuickLink[]
   focusAddress?: boolean
+  privacy?: PrivacyState
 }
 
 // Requests the UI is allowed to send. Tab-scoped actions without an explicit
@@ -44,6 +71,14 @@ export type Request =
   | { type: 'activateTab'; tabId: number }
   | { type: 'setQuickLinks'; links: QuickLink[] }
   | { type: 'setSearchEngine'; id: string; custom: string }
+  // ---- Privacy / ad blocking (Phase 3) ----
+  | { type: 'setBlockingEnabled'; enabled: boolean }
+  | { type: 'setThirdPartyCookies'; enabled: boolean }
+  | { type: 'setSiteAllowed'; host: string; allowed: boolean }
+  | { type: 'removeSiteException'; host: string }
+  | { type: 'clearSiteData'; host: string }
+  | { type: 'clearBrowsingData' }
+  | { type: 'updateFilterLists' }
 
 interface CefQueryRequest {
   request: string
@@ -86,12 +121,27 @@ export function send(req: Request): Promise<unknown> {
 
 function coerceState(value: unknown): AppState {
   const parsed = (value ?? {}) as Partial<AppState>
+  const privacy = parsed.privacy
+    ? {
+        enabled: !!parsed.privacy.enabled,
+        thirdPartyCookies: !!parsed.privacy.thirdPartyCookies,
+        siteExceptions: parsed.privacy.siteExceptions ?? [],
+        lists: parsed.privacy.lists ?? [],
+        updating: !!parsed.privacy.updating,
+        blocked: parsed.privacy.blocked ?? { total: 0 },
+        tabBlockedCounts: parsed.privacy.tabBlockedCounts ?? {},
+        siteBlockedCounts: parsed.privacy.siteBlockedCounts ?? {},
+        activeSite: parsed.privacy.activeSite ?? '',
+        activeSiteAllowed: !!parsed.privacy.activeSiteAllowed,
+      }
+    : undefined
   return {
     tabs: parsed.tabs ?? [],
     activeTabId: parsed.activeTabId ?? 0,
     searchEngine: parsed.searchEngine ?? { id: 'google', custom: '' },
     quickLinks: parsed.quickLinks ?? [],
     focusAddress: parsed.focusAddress,
+    privacy,
   }
 }
 

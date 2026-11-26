@@ -19,6 +19,12 @@ const icons = {
   search: (
     <path d="M10 3a7 7 0 1 0 4.3 12.5l4.6 4.6 1.4-1.4-4.6-4.6A7 7 0 0 0 10 3zm0 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10z" />
   ),
+  shield: (
+    <path d="M12 2 4 5v6c0 5 3.4 9.7 8 11 4.6-1.3 8-6 8-11V5l-8-3zm-1 13-3-3 1.4-1.4L11 12.2l4.6-4.6L17 9l-6 6z" />
+  ),
+  shieldOff: (
+    <path d="M12 2 4 5v6c0 5 3.4 9.7 8 11 2-.6 3.7-1.8 5.1-3.4L4.4 5.9 5.8 4.5l1.2 1.2V5l5-1.9L16.2 5H21v7.7L14.6 6.3l1.4-1.4z" />
+  ),
 }
 
 function NavButton(props: {
@@ -91,6 +97,15 @@ function App() {
   )
 
   const active = state?.tabs.find((t) => t.id === state.activeTabId)
+  const blockedHere = state?.privacy
+    ? state.privacy.tabBlockedCounts[String(state.activeTabId)] ?? 0
+    : 0
+  const badgeText =
+    blockedHere > 999
+      ? '999+'
+      : blockedHere > 99 && blockedHere < 1000
+        ? '99+'
+        : String(blockedHere)
 
   // Keep the address bar in sync with the active tab while the user is not
   // typing in it.
@@ -151,6 +166,30 @@ function App() {
         <NavButton title="الرئيسية" onClick={() => go({ type: 'home' })}>
           {icons.home}
         </NavButton>
+
+        {state?.privacy && active && !active.internal && (
+          <button
+            className={`nav-btn shield${state.privacy.activeSiteAllowed ? ' off' : ''}`}
+            title={
+              state.privacy.activeSiteAllowed
+                ? `الحجب معطّل لهذا الموقع (${state.privacy.activeSite}) — انقر للتفعيل`
+                : `الحجب مفعّل (${state.privacy.activeSite}) — انقر للتعطيل لهذا الموقع`
+            }
+            aria-label="حجب الإعلانات لهذا الموقع"
+            onClick={() =>
+              go({
+                type: 'setSiteAllowed',
+                host: state.privacy!.activeSite,
+                allowed: !state.privacy!.activeSiteAllowed,
+              })
+            }
+          >
+            <svg viewBox="0 0 24 24">
+              {state.privacy.activeSiteAllowed ? icons.shieldOff : icons.shield}
+            </svg>
+            {blockedHere > 0 && <span className="shield-badge">{badgeText}</span>}
+          </button>
+        )}
 
         <div className={`address-box${addressFocused ? ' focused' : ''}`}>
           <svg className="address-icon" viewBox="0 0 24 24" aria-hidden="true">

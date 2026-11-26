@@ -63,6 +63,13 @@ dask_finalize_target(dask_cef_app)
 # Main executable: browser process, owns the Win32 window.
 add_executable(dask_browser WIN32
     app/native/main.cpp
+    app/native/adblock/filter_engine.h
+    app/native/adblock/filter_engine.cpp
+    app/native/adblock/site_util.h
+    app/native/filter_lists.h
+    app/native/filter_lists.cpp
+    app/native/privacy_settings.h
+    app/native/privacy_settings.cpp
     app/native/browser_window.h
     app/native/browser_window.cpp
     app/native/tab_manager.h
@@ -86,6 +93,15 @@ target_link_libraries(dask_browser_subprocess PRIVATE
     libcef_lib
     libcef_dll_wrapper)
 dask_finalize_target(dask_browser_subprocess)
+
+# Filter engine unit tests (no CEF dependency; run manually or via the
+# smoke test).
+add_executable(dask_filter_tests
+    tests/filter_engine_test.cpp
+    app/native/adblock/filter_engine.h
+    app/native/adblock/filter_engine.cpp)
+target_include_directories(dask_filter_tests PRIVATE app/native)
+dask_finalize_target(dask_filter_tests)
 
 # Copy the built React UI bundle next to the binaries (served via dask://).
 add_custom_command(TARGET dask_browser POST_BUILD

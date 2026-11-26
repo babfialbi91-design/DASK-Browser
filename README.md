@@ -1,8 +1,8 @@
 # DASK Browser
 
-متصفح ويب Windows أصلي مبني على محرك **Chromium** المضمّن عبر **CEF** (Chromium Embedded Framework). C++20 + CMake. الواجهة (React + TypeScript) تأتي في المرحلة الثانية.
+متصفح ويب Windows أصلي مبني على محرك **Chromium** المضمّن عبر **CEF** (Chromium Embedded Framework). C++20 + CMake للواجهة الأصلية، وReact + TypeScript لواجهة المستخدم.
 
-**المرحلة الحالية (1 — Foundation):** أساس المشروع قابل للبناء والتشغيل، مع نافذة Windows أصلية تعرض صفحة اختبار حقيقية عبر Chromium.
+**المرحلة الحالية (3 — الخصوصية وحجب الإعلانات مكتملة):** طبقة المرحلتين 1+2 كاملة (نافذة أصلية + تبويبات + شريط أدوات RTL داكن + صفحة New Tab + جسر IPC آمن)، مضافاً إليها: حجب إعلانات ومتتبعات على مستوى الشبكة بمحرك فلترة متوافق مع قوائم EasyList/EasyPrivacy، تحديث القوائم بأمان، إحصائية محلية للطلبات المحجوبة لكل تبويب/موقع، زر حجب لكل موقع مع استثناءات يراجعها المستخدم، حجب ملفات تعريف الارتباط من طرف ثالث، صفحة إعدادات خصوصية، واختبارات وحدة للمحرك.
 
 ## المتطلبات
 
@@ -60,17 +60,19 @@ CMakeLists.txt          نظام البناء
 app/native/             عملية المتصفح: نافذة Win32 + تهيئة CEF + التبويبات
   main.cpp              نقطة الدخول (browser process)
   browser_window.*      النافذة الأصلية، دورة الحياة، اختصارات لوحة المفاتيح
-  tab_manager.*         التبويبات، جسر CefMessageRouter، الجلسة
+  tab_manager.*         التبويبات، جسر CefMessageRouter، الجلسة، القرار بالحجب
   dask_app.*            CefApp المشترك بين كل العمليات
   dask_scheme.*         سكيما UI: تقديم http://dask.ui/* من مجلد ui/ محلياً
+  privacy_settings.*    إعدادات الخصوصية (privacy.json)
+  filter_lists.*        تخزين وتحديث قوائم الفلترة (WinHTTP)
+  adblock/              محرك الفلترة (filter_engine) + أدوات المواقع (site_util)
 app/subprocess/         عملية CEF الفرعية (renderer / gpu / utility)
   subprocess_main.cpp   CefExecuteProcess
+app/ui/                 واجهة React + TypeScript (Vite): شريط الأدوات + New Tab + الإعدادات + bridge.ts
 resources/              صفحة الاختبار المحلية (file://)
 scripts/download_cef.ps1  تنزيل + تحقق SHA1 + فك ضغط CEF
-app/ui/                 واجهة React + TypeScript (Vite): شريط الأدوات + New Tab + bridge.ts
-resources/              صفحة الاختبار المحلية (file://)
-scripts/download_cef.ps1  تنزيل + تحقق SHA1 + فك ضغط CEF
-tests/smoke_test.ps1    اختبار: أدوات + CEF + الملفات + حزمة الواجهة
+tests/smoke_test.ps1    اختبار: أدوات + CEF + الملفات + حزمة الواجهة + محرك الفلترة
+tests/filter_engine_test.cpp  اختبارات وحدة محرك الفلترة
 third_party/cef/        توزيعة CEF (متجاهلة في Git)
 ```
 
@@ -81,13 +83,39 @@ third_party/cef/        توزيعة CEF (متجاهلة في Git)
 - الإغلاق: زر النافذة `X` أو إغلاق آخر تبويب → `CloseBrowser(true)` لكل تبويب → `OnBeforeClose` → `CefShutdown` بالترتيب الصحيح.
 - إذا نقصت ملفات CEF أو حزمة الواجهة بجانب الـ exe تظهر رسالة خطأ واضحة بدل انهيار صامت.
 
+## الخصوصية وحجب الإعلانات (المرحلة 3)
+
+### ما الذي يعمل؟
+
+- **حجب على مستوى الشبكة فقط** عبر `CefResourceRequestHandler`: طلبات المتتبعات/الإعلانات تُرفض قبل التنزيل (تم اختبارها فعلياً: 8/8 طلبات تتبّع من googlesyndication/doubleclick/analytics حُجبت). تُحجب طلبات الموارد الفرعية فقط — تحميل الصفحة الرئيسي (document) لا يُحجب أبداً لتفادي كسر المواقع.
+- **محرك فلترة محلي** (`app/native/adblock/`): مجموعة فرعية موثّقة من صيغة Adblock Plus — `||`، `|`، `^`، `*`، وخيارات `$third-party, ~third-party, script, image, stylesheet, subdocument, xmlhttprequest, media, font, object, other, domain=, ~domain=, important` مع `@@` استثناءات. الأداء: تحليل 50k قاعدة في ~50ms، مطابقة ~0.02ms لكل طلب.
+- **القوائم:** EasyList + EasyPrivacy من `easylist.to`، تُنزّل عبر WinHTTP، تُتحقق (حجم، عدد قواعد مقبولة)، وتُكتب ذرّياً (ملف مؤقت + استبدال). فشل التنزيل يُبقي النسخة السابقة. أول تشغيل بلا قوائم = لا حجب حتى أول تحديث يدوي من صفحة الإعدادات.
+- **زر الدرع** في شريط الأدوات: تفعيل/تعطيل الحجب للموقع الحالي (استثناء يراجعه المستخدم من صفحة الإعدادات).
+- **إحصائية حقيقية:** عدد المحجوب لكل تبويب (شارة على الدرع)، لكل موقع، وإجمالي للجلسة.
+- **ملفات تعريف الارتباط:** حجب الكوكيز من طرف ثالث (افتراضياً مفعّل) عبر `CefCookieAccessFilter`.
+- **مسح البيانات:** كوكيز الموقع الحالي أو الكل (التخزين في الذاكرة فقط).
+- **لا تتبّع:** لا telemetry، لا سجل تصفح دائم، لا تخزين سحابي.
+
+### حدود الحجب (موثّقة بصدق)
+
+- **لا يوجد cosmetic filtering** — لا تُخفى عناصر الصفحة ولا تُزال؛ القواعد الجمالية (`##`) تُعدّ وتُتجاهل.
+- القواعد ذات خيارات غير مدعومة (`$popup`, `$document`, `$csp`, `$generichide`, regex حقيقية...) تُتجاهل بأمان.
+- مطابقة third-party ونطاق الأرجاع تستخدم تقريبًا لـ Public Suffix (آخر نطاقين) — قد تعامل بعض نطاقات الخدمة متعددة المستويات (مثل co.uk) بدقة أقل.
+- قواعد `domain=` تقارن بالنطاق العلوي للتبويب فقط، وليس بكل إطارات الصفحة.
+
+### صفحة الإعدادات
+
+`http://dask.ui/settings.html` (تُفتح من زر "الخصوصية" في New Tab): تفعيل/تعطيل الحجب، حالة القوائم وتحديثها، قائمة الاستثناءات مع الإزالة، سياسة الكوكيز، ومسح البيانات — مع شرح أثر كل خيار.
+
 ## الاختبار
 
 ```bat
 powershell -ExecutionPolicy Bypass -File tests\smoke_test.ps1
-powershell -ExecutionPolicy Bypass -File tests\smoke_test.ps1 -SkipBuild   :: فحص الملفات فقط
+powershell -ExecutionPolicy Bypass -File tests\smoke_test.ps1 -SkipBuild   :: فحص الملفات + اختبارات محرك الفلترة فقط
 ```
+
+اختبارات محرك الفلترة (`build\bin\dask_filter_tests.exe`) تغطي: الحجب، الاستثناءات، $important، خيارات third-party ونوع المورد وdomain، الفواصل والبدائل، تجاهل القواعد الجمالية وغير المدعومة، والتحقق من سلامة القائمة.
 
 ## ملاحظات الترخيص
 
-CEF وChromium مرخصان BSD؛ انظر `THIRD_PARTY_NOTICES.md`.
+CEF وChromium مرخصان BSD؛ EasyList وEasyPrivacy مرخصان GPLv3؛ انظر `THIRD_PARTY_NOTICES.md`.
