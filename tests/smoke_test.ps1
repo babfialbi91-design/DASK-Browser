@@ -77,6 +77,16 @@ if (Test-Path $binDir) {
     Fail "build output directory not found: $binDir"
 }
 
+# 5. UI bundle (React dist copied next to the exe)
+$uiDir = Join-Path $binDir "ui"
+if (Test-Path (Join-Path $uiDir "index.html")) { Pass "ui bundle: index.html" }
+else { Fail "missing ui bundle file: ui/index.html (run npm run build in app/ui)" }
+if (Test-Path (Join-Path $uiDir "newtab.html")) { Pass "ui bundle: newtab.html" }
+else { Fail "missing ui bundle file: ui/newtab.html" }
+if (Test-Path (Join-Path $uiDir "assets")) {
+    Pass "ui bundle: assets/ directory"
+} else { Fail "missing ui bundle: assets/ directory" }
+
 Write-Host ""
 if ($failures.Count -eq 0) {
     Write-Host "SMOKE TEST PASSED" -ForegroundColor Green

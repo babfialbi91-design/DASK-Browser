@@ -1,28 +1,35 @@
-// DASK Browser - native Win32 window hosting a CEF browser.
+// DASK Browser - native Win32 window hosting the UI browser and all tabs.
+// Layout and host-window bookkeeping live on this thread; all browser logic
+// lives in TabManager on the CEF UI thread (see tab_manager.h).
 #include "browser_window.h"
 
 #include <windows.h>
 
-#include <string>
+#include <cstdint>
+#include <map>
 
 #include "dask_app.h"
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
-#include "include/cef_client.h"
-#include "include/cef_load_handler.h"
-#include "include/cef_render_handler.h"
+#include "tab_manager.h"
 
 namespace dask {
 namespace {
 
 constexpr wchar_t kWindowClassName[] = L"DaskBrowserMainWindow";
+constexpr wchar_t kHostClassName[] = L"DaskTabHost";
 constexpr int kInitialWidth = 1280;
 constexpr int kInitialHeight = 800;
 
-// CEF runtime files that must sit next to the executable.
+// Win32-thread-only bookkeeping.
+std::map<int64_t, HWND> g_hosts;  // tab id -> host window (0 = UI toolbar)
+HWND g_main_hwnd = nullptr;
+HHOOK g_kbd_hook = nullptr;
+
 bool CefRuntimeFilesPresent(const std::wstring& exe_dir) {
-  std::wstring checks[] = {exe_dir + L"\\libcef.dll", exe_dir + L"\\icudtl.dat",
-                           exe_dir + L"\\resources.pak"};
+  const std::wstring checks[] = {exe_dir + L"\\libcef.dll",
+                                 exe_dir + L"\\icudtl.dat",
+                                 exe_dir + L"\\resources.pak"};
   for (const auto& path : checks) {
     DWORD attrs = ::GetFileAttributesW(path.c_str());
     if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY))
@@ -40,99 +47,198 @@ std::wstring ExeDirectory() {
   return dir;
 }
 
-void ShowFatalError(HWND owner, const std::wstring& title,
-                    const std::wstring& message) {
-  ::MessageBoxW(owner, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
+void ShowFatalError(const std::wstring& title, const std::wstring& message) {
+  ::MessageBoxW(nullptr, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
 }
 
-// Client implementation: wires CEF lifecycle / display / load events to the
-// hosting Win32 window. Phase 1 keeps this minimal but real (no stubs).
-class DaskClient : public CefClient, public CefLifeSpanHandler,
-                   public CefDisplayHandler, public CefLoadHandler {
- public:
-  explicit DaskClient(HWND host_window) : host_window_(host_window) {}
+// Positions the UI browser and every tab host inside the main window.
+void DoLayout() {
+  if (!g_main_hwnd) return;
+  RECT rc;
+  if (!::GetClientRect(g_main_hwnd, &rc)) return;
+  const int width = rc.right - rc.left;
+  const int height = rc.bottom - rc.top;
+  const int content_y = kUiToolbarHeight;
+  const int content_h = height - kUiToolbarHeight;
 
-  // CefClient
-  CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
-  CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
-  CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
+  std::vector<int64_t> order;
+  int64_t active_id = 0;
+  TabManager::Get()->GetLayout(order, active_id);
 
-  // CefLifeSpanHandler
-  void OnBeforeClose(CefRefPtr<CefBrowser> browser) override {
-    // The browser is gone; tear down the host window. This is the documented
-    // safe place to leave the app loop before CefShutdown() is called.
-    browser_.reset();
-    ::PostMessageW(host_window_, WM_DASK_BROWSER_CLOSED, 0, 0);
+  HDWP dwp = ::BeginDeferWindowPos(static_cast<int>(g_hosts.size()) + 1);
+  for (const auto& [id, host] : g_hosts) {
+    if (!host) continue;
+    if (id == 0) {
+      // UI toolbar across the top - always visible.
+      if (dwp)
+        dwp = ::DeferWindowPos(dwp, host, nullptr, 0, 0, width,
+                              kUiToolbarHeight,
+                              SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    } else {
+      const bool visible = (id == active_id) && content_h > 0;
+      if (dwp) {
+        dwp = ::DeferWindowPos(
+            dwp, host, nullptr, 0, content_y, width,
+            content_h > 0 ? content_h : 1,
+            visible ? (SWP_NOZORDER | SWP_NOACTIVATE)
+                    : (SWP_NOZORDER | SWP_NOACTIVATE | SWP_HIDEWINDOW));
+      }
+    }
+    // Keep the embedded Chromium child in sync with the host.
+    if (HWND chrome = ::FindWindowExW(host, nullptr, L"Chrome_WidgetWin_0",
+                                      nullptr)) {
+      const int h = (id == 0) ? kUiToolbarHeight : content_h;
+      if (h > 0) {
+        ::SetWindowPos(chrome, nullptr, 0, 0, width, h,
+                       SWP_NOZORDER | SWP_NOACTIVATE);
+      }
+    }
   }
+  if (dwp) ::EndDeferWindowPos(dwp);
+}
 
-  // CefDisplayHandler
-  void OnTitleChange(CefRefPtr<CefBrowser> browser,
-                     const CefString& title) override {
-    ::SetWindowTextW(host_window_,
-                     (L"DASK Browser - " + std::wstring(title)).c_str());
+// Focus a content tab natively after activation (also hides the others).
+void ShowActiveTab() {
+  std::vector<int64_t> order;
+  int64_t active_id = 0;
+  TabManager::Get()->GetLayout(order, active_id);
+  for (const auto& [id, host] : g_hosts) {
+    if (id == 0) continue;
+    ::ShowWindow(host, id == active_id ? SW_SHOWNA : SW_HIDE);
   }
+}
 
-  // CefLoadHandler
-  void OnLoadError(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
-                   ErrorCode errorCode, const CefString& errorText,
-                   const CefString& failedUrl) override {
-    if (errorCode == ERR_ABORTED) return;  // User navigation, not a failure.
-    std::wstring msg = L"Load error (" + std::to_wstring(errorCode) +
-                       L"): " + errorText.ToWString() + L"\nURL: " +
-                       failedUrl.ToWString();
-    ::OutputDebugStringW(msg.c_str());
-    ::SetWindowTextW(host_window_,
-                     (L"DASK Browser - " + msg).c_str());
+// ---------------------------------------------------------------------------
+// Global keyboard shortcut hook (WH_KEYBOARD_LL). Active only while DASK is
+// the foreground window, so system-wide shortcuts are never swallowed.
+// ---------------------------------------------------------------------------
+
+bool KeyDebounced(int vk, int gap_ms) {
+  static DWORD last[256] = {};
+  const DWORD now = ::GetTickCount();
+  if (now - last[vk] < static_cast<DWORD>(gap_ms)) return true;
+  last[vk] = now;
+  return false;
+}
+
+LRESULT CALLBACK KeyboardProc(int code, WPARAM wparam, LPARAM lparam) {
+  if (code == HC_ACTION &&
+      (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN)) {
+    const auto* info = reinterpret_cast<KBDLLHOOKSTRUCT*>(lparam);
+    if (info && ::GetForegroundWindow() == g_main_hwnd) {
+      const bool ctrl = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
+      const bool shift = (::GetKeyState(VK_SHIFT) & 0x8000) != 0;
+      const bool alt = (::GetKeyState(VK_MENU) & 0x8000) != 0;
+      const int vk = static_cast<int>(info->vkCode);
+      TabManager* mgr = TabManager::Get();
+      bool handled = true;
+
+      if (ctrl && !alt) {
+        switch (vk) {
+          case 'L':
+            if (!KeyDebounced(vk, 200)) mgr->FocusAddress();
+            break;
+          case 'T':
+            if (!KeyDebounced(vk, 250)) mgr->CreateTab(std::wstring(kNewTabUrl));
+            break;
+          case 'W': {
+            if (!KeyDebounced(vk, 250)) {
+              std::vector<int64_t> order;
+              int64_t active = 0;
+              mgr->GetLayout(order, active);
+              if (active != 0) mgr->CloseTab(active);
+            }
+            break;
+          }
+          case 'R':
+            mgr->Reload();
+            break;
+          case VK_TAB:
+            mgr->CycleTab(shift ? -1 : 1);
+            break;
+          default:
+            handled = false;
+        }
+      } else if (alt && !ctrl) {
+        if (vk == VK_LEFT) {
+          mgr->Back();
+        } else if (vk == VK_RIGHT) {
+          mgr->Forward();
+        } else {
+          handled = false;
+        }
+      } else {
+        handled = false;
+      }
+
+      if (handled) return 1;
+    }
   }
+  return ::CallNextHookEx(g_kbd_hook, code, wparam, lparam);
+}
 
-  CefRefPtr<CefBrowser> browser() const { return browser_; }
-  void set_browser(CefRefPtr<CefBrowser> browser) { browser_ = browser; }
-
-  static constexpr UINT WM_DASK_BROWSER_CLOSED =
-      WM_APP + 0x4B41;  // "dask" marker for the custom close message.
-
- private:
-  IMPLEMENT_REFCOUNTING(DaskClient);
-  DISALLOW_COPY_AND_ASSIGN(DaskClient);
-
-  HWND host_window_;
-  CefRefPtr<CefBrowser> browser_;
-};
+// ---------------------------------------------------------------------------
+// Main window.
+// ---------------------------------------------------------------------------
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
-  auto* client =
-      reinterpret_cast<DaskClient*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
   switch (msg) {
     case WM_SIZE: {
-      if (client && client->browser()) {
-        // Windowed CEF renders into a child Chromium window; keep it in sync.
-        RECT rc;
-        if (::GetClientRect(hwnd, &rc)) {
-          HWND chrome = ::FindWindowExW(hwnd, nullptr, L"Chrome_WidgetWin_0",
-                                        nullptr);
-          if (chrome)
-            ::SetWindowPos(chrome, nullptr, 0, 0, rc.right - rc.left,
-                           rc.bottom - rc.top, SWP_NOZORDER | SWP_NOACTIVATE);
-        }
-      }
+      if (wparam != SIZE_MINIMIZED) DoLayout();
       return 0;
     }
     case WM_CLOSE: {
-      if (client && client->browser()) {
-        // Start the documented close sequence; WM_DASK_BROWSER_CLOSED in
-        // OnBeforeClose destroys the window afterwards.
-        client->browser()->GetHost()->CloseBrowser(true);
-        return 0;
+      // Graceful close: close every browser, wait for all OnBeforeClose, then
+      // WM_DASK_ALL_CLOSED destroys the window.
+      TabManager::Get()->RequestCloseAll();
+      return 0;
+    }
+    case WM_DASK_RUN_TASK: {
+      auto* fn = reinterpret_cast<std::function<void()>*>(lparam);
+      if (fn) {
+        auto run = std::move(*fn);
+        delete fn;
+        run();
       }
+      return 0;
+    }
+    case WM_DASK_CREATE_HOST: {
+      const int64_t id = static_cast<int64_t>(wparam);
+      HWND host = ::CreateWindowExW(
+          0, kHostClassName, L"", WS_CHILD | WS_CLIPSIBLINGS, 0,
+          kUiToolbarHeight, 100, 100, hwnd, nullptr,
+          reinterpret_cast<HINSTANCE>(::GetWindowLongPtrW(hwnd, GWLP_HINSTANCE)),
+          nullptr);
+      if (host) g_hosts[id] = host;
+      return reinterpret_cast<LRESULT>(host);
+    }
+    case WM_DASK_DESTROY_HOST: {
+      const int64_t id = static_cast<int64_t>(wparam);
+      auto it = g_hosts.find(id);
+      if (it != g_hosts.end()) {
+        ::DestroyWindow(it->second);
+        g_hosts.erase(it);
+      }
+      return 0;
+    }
+    case WM_DASK_LAYOUT: {
+      ShowActiveTab();
+      DoLayout();
+      return 0;
+    }
+    case WM_DASK_ALL_CLOSED: {
       ::DestroyWindow(hwnd);
       return 0;
     }
-    case DaskClient::WM_DASK_BROWSER_CLOSED:
-      ::DestroyWindow(hwnd);
-      return 0;
-    case WM_DESTROY:
+    case WM_DESTROY: {
+      if (g_kbd_hook) {
+        ::UnhookWindowsHookEx(g_kbd_hook);
+        g_kbd_hook = nullptr;
+      }
+      g_main_hwnd = nullptr;
       ::PostQuitMessage(0);
       return 0;
+    }
     default:
       return ::DefWindowProcW(hwnd, msg, wparam, lparam);
   }
@@ -144,12 +250,12 @@ int RunBrowserWindow(HINSTANCE h_instance, int n_cmd_show) {
   const std::wstring exe_dir = ExeDirectory();
 
   if (!CefRuntimeFilesPresent(exe_dir)) {
-    ShowFatalError(nullptr, L"DASK Browser",
-                   L"CEF runtime files are missing next to dask_browser.exe "
-                   L"(libcef.dll / icudtl.dat / resources.pak).\n\n"
-                   L"Run:  powershell -ExecutionPolicy Bypass -File "
-                   L"scripts/download_cef.ps1\n"
-                   L"then rebuild so CMake copies the CEF files.");
+    ShowFatalError(
+        L"DASK Browser",
+        L"CEF runtime files are missing next to dask_browser.exe "
+        L"(libcef.dll / icudtl.dat / resources.pak).\n\n"
+        L"Run:  powershell -ExecutionPolicy Bypass -File "
+        L"scripts/download_cef.ps1\nthen rebuild so CMake copies the CEF files.");
     return 1;
   }
 
@@ -159,13 +265,14 @@ int RunBrowserWindow(HINSTANCE h_instance, int n_cmd_show) {
       .FromWString(exe_dir + L"\\dask_browser_subprocess.exe");
   CefString(&settings.resources_dir_path).FromWString(exe_dir);
   CefString(&settings.locales_dir_path).FromWString(exe_dir + L"\\locales");
-  // cache_path left empty for Phase 1: fully in-memory profile, no disk state.
+  // cache_path left empty: no profile data is stored (no passwords, history).
   settings.multi_threaded_message_loop = true;  // CEF runs its own loop thread.
 
   CefMainArgs main_args(h_instance);
-  CefRefPtr<CefApp> app = CreateDaskApp();
+  // The browser process installs the http://dask.ui UI handler.
+  CefRefPtr<CefApp> app = CreateDaskApp(exe_dir + L"\\ui");
   if (!CefInitialize(main_args, settings, app, nullptr)) {
-    ShowFatalError(nullptr, L"DASK Browser", L"CefInitialize() failed.");
+    ShowFatalError(L"DASK Browser", L"CefInitialize() failed.");
     return 1;
   }
 
@@ -178,13 +285,19 @@ int RunBrowserWindow(HINSTANCE h_instance, int n_cmd_show) {
   wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
   wc.hIcon = ::LoadIconW(nullptr, IDI_APPLICATION);
   wc.hIconSm = wc.hIcon;
-  wc.hbrBackground = ::CreateSolidBrush(RGB(30, 30, 30));
+  wc.hbrBackground = ::CreateSolidBrush(RGB(20, 21, 25));
   wc.lpszClassName = kWindowClassName;
   if (!::RegisterClassExW(&wc)) {
-    ShowFatalError(nullptr, L"DASK Browser", L"RegisterClassExW() failed.");
+    ShowFatalError(L"DASK Browser", L"RegisterClassExW() failed.");
     CefShutdown();
     return 1;
   }
+  // Host windows live inside the main window.
+  WNDCLASSEXW hc = wc;
+  hc.lpfnWndProc = ::DefWindowProcW;
+  hc.hbrBackground = ::CreateSolidBrush(RGB(20, 21, 25));
+  hc.lpszClassName = kHostClassName;
+  ::RegisterClassExW(&hc);
 
   RECT frame = {0, 0, kInitialWidth, kInitialHeight};
   ::AdjustWindowRect(&frame, WS_OVERLAPPEDWINDOW, FALSE);
@@ -193,39 +306,22 @@ int RunBrowserWindow(HINSTANCE h_instance, int n_cmd_show) {
       CW_USEDEFAULT, CW_USEDEFAULT, frame.right - frame.left,
       frame.bottom - frame.top, nullptr, nullptr, h_instance, nullptr);
   if (!hwnd) {
-    ShowFatalError(nullptr, L"DASK Browser", L"CreateWindowExW() failed.");
+    ShowFatalError(L"DASK Browser", L"CreateWindowExW() failed.");
     CefShutdown();
     return 1;
   }
-  ::SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);  // Client attached below.
+  g_main_hwnd = hwnd;
 
-  // Browser windowed into the host window.
-  auto client = CefRefPtr<DaskClient>(new DaskClient(hwnd));
+  TabManager::Get()->Initialize(hwnd);
 
-  CefWindowInfo window_info;
-  RECT rc;
-  ::GetClientRect(hwnd, &rc);
-  window_info.SetAsChild(hwnd, CefRect(0, 0, rc.right - rc.left,
-                                       rc.bottom - rc.top));
-
-  CefBrowserSettings browser_settings;
-
-  // Safe local test page shipped with the app (file:// on our own file).
-  CefString url;
-  url.FromWString(L"file:///" + exe_dir + L"\\test_page.html");
-
-  // Signature: (window_info, client, url, settings, extra_info, request_context).
-  CefBrowserHost::CreateBrowser(window_info, client, url, browser_settings,
-                                nullptr, nullptr);
-
-  // Remember the client on the window once the browser exists so WndProc can
-  // forward events. CreateBrowser is async; hook the client immediately for
-  // close handling (CreateBrowser already registered the client internally).
-  ::SetWindowLongPtrW(hwnd, GWLP_USERDATA,
-                      reinterpret_cast<LONG_PTR>(client.get()));
+  // Global shortcuts (active only while DASK is focused).
+  g_kbd_hook = ::SetWindowsHookExW(WH_KEYBOARD_LL, KeyboardProc, h_instance, 0);
 
   ::ShowWindow(hwnd, n_cmd_show);
   ::UpdateWindow(hwnd);
+
+  // Create the UI browser + restore the last session.
+  TabManager::Get()->Start();
 
   // Standard Win32 loop; CEF runs on its own thread (MTML).
   MSG msg;
@@ -234,7 +330,7 @@ int RunBrowserWindow(HINSTANCE h_instance, int n_cmd_show) {
     ::DispatchMessageW(&msg);
   }
 
-  // Browser already closed (OnBeforeClose ran) -> safe per CEF docs.
+  // All browsers closed (OnBeforeClose for every one ran) -> safe per CEF docs.
   CefShutdown();
   return static_cast<int>(msg.wParam);
 }

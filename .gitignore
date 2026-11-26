@@ -18,3 +18,5 @@ scripts/cef_root.txt
 *.log
 *.tmp
 .vs/
+app/ui/node_modules/
+*.tsbuildinfo
