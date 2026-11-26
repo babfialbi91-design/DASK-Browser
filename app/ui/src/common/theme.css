@@ -552,3 +552,82 @@ input:focus-visible,
 .newtab-root button {
   user-select: none;
 }
+
+/* ---- Settings page tabs & storage sections (Phase 4) ---- */
+.settings-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 16px 0 8px;
+}
+
+.settings-tab {
+  background: var(--panel-raised);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 7px 16px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.settings-tab.on {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.search-input {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  font-size: 13px;
+  min-width: 220px;
+}
+
+.note.warn {
+  color: var(--danger);
+}
+
+.bookmark-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bookmark-row .title-input {
+  flex: 1;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+.bookmark-row .title-input:hover,
+.bookmark-row .title-input:focus {
+  border-color: var(--border);
+  outline: none;
+}
+
+.bm-url {
+  color: var(--muted);
+  font-size: 11px;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: ltr;
+}
+
+select {
+  background: var(--panel-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  font-size: 13px;
+}

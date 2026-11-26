@@ -97,6 +97,14 @@ if (Test-Path $testExe) {
     else { Fail "filter engine tests failed" }
 } else { Fail "missing dask_filter_tests.exe (build target dask_filter_tests)" }
 
+# 7. Storage layer unit tests (Phase 4)
+$storageExe = Join-Path $binDir "dask_storage_tests.exe"
+if (Test-Path $storageExe) {
+    & $storageExe
+    if ($LASTEXITCODE -eq 0) { Pass "storage layer tests" }
+    else { Fail "storage layer tests failed" }
+} else { Fail "missing dask_storage_tests.exe (build target dask_storage_tests)" }
+
 Write-Host ""
 if ($failures.Count -eq 0) {
     Write-Host "SMOKE TEST PASSED" -ForegroundColor Green

@@ -153,6 +153,16 @@ LRESULT CALLBACK KeyboardProc(int code, WPARAM wparam, LPARAM lparam) {
           case 'R':
             mgr->Reload();
             break;
+          case 'D':
+            if (!KeyDebounced(vk, 250)) mgr->ToggleBookmarkActive();
+            break;
+          case 'N':
+            if (shift && !KeyDebounced(vk, 300)) {
+              mgr->CreateTab(kNewTabUrl, true);  // private tab (Ctrl+Shift+N)
+            } else {
+              handled = false;
+            }
+            break;
           case VK_TAB:
             mgr->CycleTab(shift ? -1 : 1);
             break;
@@ -227,6 +237,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
       return 0;
     }
     case WM_DASK_ALL_CLOSED: {
+      // Stop the DB thread before CefShutdown so SQLite closes cleanly.
+      TabManager::Get()->StopDatabase();
       ::DestroyWindow(hwnd);
       return 0;
     }
@@ -267,7 +279,6 @@ int RunBrowserWindow(HINSTANCE h_instance, int n_cmd_show) {
   CefString(&settings.locales_dir_path).FromWString(exe_dir + L"\\locales");
   // cache_path left empty: no profile data is stored (no passwords, history).
   settings.multi_threaded_message_loop = true;  // CEF runs its own loop thread.
-
   CefMainArgs main_args(h_instance);
   // The browser process installs the http://dask.ui UI handler.
   CefRefPtr<CefApp> app = CreateDaskApp(exe_dir + L"\\ui");

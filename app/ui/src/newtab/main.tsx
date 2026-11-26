@@ -132,6 +132,13 @@ function App() {
         >
           الخصوصية
         </button>
+        <button
+          className="nt-btn"
+          title="Ctrl+Shift+N"
+          onClick={() => go({ type: 'createTab', private: true })}
+        >
+          تبويب خاص
+        </button>
       </div>
 
       {editing && (

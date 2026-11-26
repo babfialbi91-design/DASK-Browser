@@ -20,3 +20,4 @@ scripts/cef_root.txt
 .vs/
 app/ui/node_modules/
 *.tsbuildinfo
+*.obj

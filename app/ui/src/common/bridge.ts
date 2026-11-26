@@ -8,6 +8,29 @@ export interface TabState {
   url: string
   loading: boolean
   internal: boolean
+  private: boolean
+}
+
+export interface BookmarkUi {
+  id: number
+  title: string
+  url: string
+}
+
+export interface DownloadUi {
+  id: number
+  filename: string
+  url: string
+  state: number // 0 active, 1 complete, 2 canceled, 3 failed
+  received: number
+  total: number // -1 = unknown
+}
+
+export interface HistoryItemUi {
+  id: number
+  url: string
+  title: string
+  visitedAt: number
 }
 
 export interface QuickLink {
@@ -53,6 +76,12 @@ export interface AppState {
   quickLinks: QuickLink[]
   focusAddress?: boolean
   privacy?: PrivacyState
+  bookmarks: BookmarkUi[]
+  downloads: DownloadUi[]
+  restoreSession: boolean
+  historyEnabled: boolean
+  retentionDays: number
+  dbNote?: string
 }
 
 // Requests the UI is allowed to send. Tab-scoped actions without an explicit
@@ -66,7 +95,7 @@ export type Request =
   | { type: 'reload' }
   | { type: 'stop' }
   | { type: 'home' }
-  | { type: 'createTab'; url?: string }
+  | { type: 'createTab'; url?: string; private?: boolean }
   | { type: 'closeTab'; tabId: number }
   | { type: 'activateTab'; tabId: number }
   | { type: 'setQuickLinks'; links: QuickLink[] }
@@ -79,6 +108,19 @@ export type Request =
   | { type: 'clearSiteData'; host: string }
   | { type: 'clearBrowsingData' }
   | { type: 'updateFilterLists' }
+  // ---- Storage (Phase 4) ----
+  | { type: 'toggleBookmark'; title: string; url: string }
+  | { type: 'removeBookmark'; id: number }
+  | { type: 'updateBookmark'; id: number; title: string; url: string }
+  | { type: 'searchHistory'; query: string; limit: number }
+  | { type: 'clearHistory'; days: number }
+  | { type: 'setHistoryEnabled'; enabled: boolean }
+  | { type: 'setRetentionDays'; days: number }
+  | { type: 'setRestoreSession'; enabled: boolean }
+  | { type: 'cancelDownload'; id: number }
+  | { type: 'removeDownload'; id: number }
+  | { type: 'openDownload'; id: number }
+  | { type: 'openDownloadsFolder' }
 
 interface CefQueryRequest {
   request: string
@@ -99,6 +141,25 @@ export function hasBridge(): boolean {
 }
 
 /** Send one request; resolves with the parsed JSON response. */
+export function sendRaw(req: Request): Promise<string> {
+  if (!hasBridge()) {
+    return Promise.reject(new Error('bridge unavailable (must run inside DASK Browser)'))
+  }
+  return new Promise((resolve, reject) => {
+    window.cefQuery!({
+      request: JSON.stringify(req),
+      persistent: false,
+      onSuccess: (response) => resolve(response),
+      onFailure: (code, message) => reject(new Error(`bridge error ${code}: ${message}`)),
+    })
+  })
+}
+
+export async function sendTyped<T>(req: Request): Promise<T> {
+  const raw = await sendRaw(req)
+  return JSON.parse(raw || '{}') as T
+}
+
 export function send(req: Request): Promise<unknown> {
   if (!hasBridge()) {
     return Promise.reject(new Error('bridge unavailable (must run inside DASK Browser)'))
@@ -120,7 +181,7 @@ export function send(req: Request): Promise<unknown> {
 }
 
 function coerceState(value: unknown): AppState {
-  const parsed = (value ?? {}) as Partial<AppState>
+  const parsed = (value ?? {}) as Partial<AppState & { bookmarks?: BookmarkUi[]; downloads?: DownloadUi[]; restoreSession?: boolean; historyEnabled?: boolean; retentionDays?: number; dbNote?: string }>
   const privacy = parsed.privacy
     ? {
         enabled: !!parsed.privacy.enabled,
@@ -142,6 +203,12 @@ function coerceState(value: unknown): AppState {
     quickLinks: parsed.quickLinks ?? [],
     focusAddress: parsed.focusAddress,
     privacy,
+    bookmarks: parsed.bookmarks ?? [],
+    downloads: parsed.downloads ?? [],
+    restoreSession: parsed.restoreSession ?? true,
+    historyEnabled: parsed.historyEnabled ?? true,
+    retentionDays: parsed.retentionDays ?? 90,
+    dbNote: parsed.dbNote,
   }
 }
 

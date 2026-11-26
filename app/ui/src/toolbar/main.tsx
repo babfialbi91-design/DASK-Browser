@@ -22,6 +22,12 @@ const icons = {
   shield: (
     <path d="M12 2 4 5v6c0 5 3.4 9.7 8 11 4.6-1.3 8-6 8-11V5l-8-3zm-1 13-3-3 1.4-1.4L11 12.2l4.6-4.6L17 9l-6 6z" />
   ),
+  star: (
+    <path d="M12 2.5l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5-5.8-3-5.8 3 1.1-6.5L2.6 9.3l6.5-.9L12 2.5z" />
+  ),
+  starFilled: (
+    <path d="M12 2.5l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5-5.8-3-5.8 3 1.1-6.5L2.6 9.3l6.5-.9L12 2.5zm0 3.4L9.9 10.2l-4.4.6 3.2 3.1-.8 4.4L12 16.1l4.1 2.2-.8-4.4 3.2-3.1-4.4-.6L12 5.9z" fill="currentColor" fillRule="evenodd" />
+  ),
   shieldOff: (
     <path d="M12 2 4 5v6c0 5 3.4 9.7 8 11 2-.6 3.7-1.8 5.1-3.4L4.4 5.9 5.8 4.5l1.2 1.2V5l5-1.9L16.2 5H21v7.7L14.6 6.3l1.4-1.4z" />
   ),
@@ -100,6 +106,7 @@ function App() {
   const blockedHere = state?.privacy
     ? state.privacy.tabBlockedCounts[String(state.activeTabId)] ?? 0
     : 0
+  const bookmarked = !!active && !!state?.bookmarks.some((b) => b.url === active.url)
   const badgeText =
     blockedHere > 999
       ? '999+'
@@ -108,10 +115,16 @@ function App() {
         : String(blockedHere)
 
   // Keep the address bar in sync with the active tab while the user is not
-  // typing in it.
+  // typing in it. Internal UI pages (new tab, settings) show a blank address
+  // bar like real browsers do for chrome://newtab.
   useEffect(() => {
-    if (!addressFocused && active) setAddress(active.url)
-  }, [active?.id, active?.url, addressFocused]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (addressFocused) return
+    if (!active || active.internal) {
+      setAddress('')
+    } else {
+      setAddress(active.url)
+    }
+  }, [active?.id, active?.url, active?.internal, addressFocused]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const go = useCallback((req: Parameters<typeof send>[0]) => {
     void send(req).catch((err) => console.error(err))
@@ -166,6 +179,17 @@ function App() {
         <NavButton title="الرئيسية" onClick={() => go({ type: 'home' })}>
           {icons.home}
         </NavButton>
+
+        {active && !active.internal && !active.private && (
+          <button
+            className={'nav-btn star' + (bookmarked ? ' on' : '')}
+            title={bookmarked ? 'إزالة من المفضلة (Ctrl+D)' : 'إضافة إلى المفضلة (Ctrl+D)'}
+            aria-label="إشارة مرجعية"
+            onClick={() => go({ type: 'toggleBookmark', title: active.title || active.url, url: active.url })}
+          >
+            <svg viewBox="0 0 24 24">{bookmarked ? icons.starFilled : icons.star}</svg>
+          </button>
+        )}
 
         {state?.privacy && active && !active.internal && (
           <button

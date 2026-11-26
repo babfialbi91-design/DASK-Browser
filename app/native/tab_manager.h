@@ -12,12 +12,15 @@
 
 #include <windows.h>
 
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -26,8 +29,11 @@
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
+#include "include/cef_download_handler.h"
 #include "include/wrapper/cef_message_router.h"
 #include "privacy_settings.h"
+#include "storage/database.h"
+#include "storage/stores.h"
 
 namespace dask {
 
@@ -46,6 +52,23 @@ constexpr wchar_t kNewTabUrl[] = L"http://dask.ui/newtab.html";
 struct QuickLink {
   std::wstring title;
   std::wstring url;
+};
+
+// UI-facing mirrors of DB rows (CEF UI thread copies, updated by the DB
+// thread through PostToCef).
+struct BookmarkUi {
+  int64_t id = 0;
+  std::wstring title;
+  std::wstring url;
+};
+struct DownloadUi {
+  int64_t id = 0;
+  std::wstring url;
+  std::wstring path;
+  std::wstring filename;
+  int state = 0;
+  int64_t received = 0;
+  int64_t total = -1;
 };
 
 struct SearchEngineConfig {
@@ -74,7 +97,7 @@ class TabManager {
   void RequestCloseAll();
 
   // ---- Operations (thread-safe; marshaled to the CEF UI thread) ----
-  void CreateTab(std::wstring url);
+  void CreateTab(std::wstring url, bool private_tab = false);
   void CloseTab(int64_t tab_id);
   void ActivateTab(int64_t tab_id);
   void NavigateActive(const std::wstring& input);  // address bar / search text
@@ -89,6 +112,35 @@ class TabManager {
   void OnTitleChanged(int64_t tab_id, const std::wstring& title);
   void OnAddressChanged(int64_t tab_id, const std::wstring& url);
   void OnLoadingChanged(int64_t tab_id, bool loading);
+
+  // ---- Downloads (called by TabClient on the browser UI thread) ----
+  bool OnBeforeDownload(int64_t tab_id, CefRefPtr<CefDownloadItem> item,
+                        const std::wstring& suggested_name,
+                        CefRefPtr<CefBeforeDownloadCallback> callback);
+  void OnDownloadUpdated(int64_t tab_id, CefRefPtr<CefDownloadItem> item,
+                         CefRefPtr<CefDownloadItemCallback> callback);
+  void CancelDownload(int64_t db_id);   // CEF UI thread
+  void OpenDownload(int64_t db_id);     // CEF UI thread
+  void OpenDownloadsFolder();           // CEF UI thread
+
+  // ---- Storage (Phase 4): posts work to the dedicated DB thread ----
+  void StartDatabase();                 // called on the CEF UI thread
+  void StopDatabase();                  // called before CefShutdown
+  void RecordVisit(int64_t tab_id, const std::wstring& url,
+                   const std::wstring& title);
+  void ToggleBookmark(const std::wstring& title, const std::wstring& url);
+  void RemoveBookmark(int64_t id);
+  void UpdateBookmark(int64_t id, const std::wstring& title,
+                      const std::wstring& url);
+  void ClearHistory(int days);          // 0 = everything
+  void ToggleBookmarkActive();          // Ctrl+D: star the active tab
+  void SetHistoryEnabled(bool enabled);
+  void SetRetentionDays(int days);
+  void SetRestoreSession(bool enabled);
+
+  // Internal helpers (used by TabClient/DaskQueryHandler via friendship).
+  void PostToDb(std::function<void()> fn);
+  void RefreshStorageCachesOnDb();  // DB thread only
 
   // ---- Called by TabClient on the CEF IO thread (Phase 3) ----
   // Returns true when the request must be blocked. |first_party| is the
@@ -106,6 +158,8 @@ class TabManager {
   void UpdateFilterLists();                         // CEF UI thread
   // Site the user is browsing (top-level host of the tab, CEF UI thread).
   std::wstring TabSiteHost(int64_t tab_id);
+  // Current tab title (CEF UI thread; used when recording history).
+  std::wstring TabTitle(int64_t tab_id);
 
   // ---- Wiring for TabClient (CEF UI thread) ----
   CefRefPtr<CefMessageRouterBrowserSide> router() const { return router_; }
@@ -122,6 +176,7 @@ class TabManager {
     int64_t id = 0;
     CefRefPtr<CefBrowser> browser;
     bool internal = false;  // trusted UI tab
+    bool private_flag = false;  // private tab: no history, isolated storage
     bool closing = false;
     std::wstring title;
     std::wstring url;
@@ -172,6 +227,42 @@ class TabManager {
   // tab id -> top-level site host ("" for internal pages); written on the
   // CEF UI thread, read on the IO thread for request filtering.
   std::map<int64_t, std::wstring> tab_site_;
+
+  // ---- Storage (Phase 4) ----
+  // Dedicated DB thread: all SQLite work happens here.
+  std::thread db_thread_;
+  std::mutex db_mutex_;
+  std::condition_variable db_cv_;
+  std::deque<std::function<void()>> db_queue_;
+  bool db_quit_ = false;
+
+  // DB-thread only objects (valid between StartDatabase and StopDatabase).
+  std::unique_ptr<storage::Database> db_;
+  std::unique_ptr<storage::Bookmarks> bookmarks_store_;
+  std::unique_ptr<storage::History> history_store_;
+  std::unique_ptr<storage::Downloads> downloads_store_;
+  std::unique_ptr<storage::Settings> settings_store_;
+
+  // Read models mirrored to the CEF UI thread (guarded by state_mutex_).
+  std::mutex state_mutex_;
+  std::vector<BookmarkUi> bookmarks_cache_;
+  std::vector<DownloadUi> downloads_cache_;
+  std::wstring db_note_;  // human-readable storage problem, if any
+
+  // Preferences (CEF UI thread copies; persisted in settings table).
+  bool restore_session_ = true;
+  bool history_enabled_ = true;
+  int retention_days_ = 90;
+
+  // Active downloads: CEF id -> callback used for cancel (CEF UI thread).
+  std::map<uint32_t, CefRefPtr<CefDownloadItemCallback>> active_downloads_;
+  // CEF id -> our DB row id (CEF UI thread; private downloads use id 0).
+  std::map<uint32_t, int64_t> download_ids_;
+  // DB row id -> CEF id (for cancel lookup).
+  std::map<int64_t, uint32_t> download_db_to_cef_;
+  // Shared in-memory request context for private tabs (cookie/cache
+  // isolation). Created lazily on the CEF UI thread.
+  CefRefPtr<CefRequestContext> private_context_;
 
   friend class DaskQueryHandler;
   friend class TabClient;

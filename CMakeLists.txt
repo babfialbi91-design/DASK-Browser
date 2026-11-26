@@ -79,6 +79,7 @@ add_executable(dask_browser WIN32
 target_include_directories(dask_browser PRIVATE ${CEF_ROOT} app/native)
 target_link_libraries(dask_browser PRIVATE
     dask_cef_app
+    dask_storage
     libcef_lib
     libcef_dll_wrapper
     d3d11 dxgi dxguid)
@@ -93,6 +94,25 @@ target_link_libraries(dask_browser_subprocess PRIVATE
     libcef_lib
     libcef_dll_wrapper)
 dask_finalize_target(dask_browser_subprocess)
+
+# Storage layer: SQLite via the system winsqlite3.dll (Windows SDK lib).
+add_library(dask_storage STATIC
+    app/native/storage/database.h
+    app/native/storage/database.cpp
+    app/native/storage/stores.h
+    app/native/storage/stores.cpp
+    app/native/storage/download_filename.h
+    app/native/storage/download_filename.cpp)
+target_include_directories(dask_storage PRIVATE app/native)
+target_link_libraries(dask_storage PUBLIC winsqlite3)
+dask_finalize_target(dask_storage)
+
+# Storage layer unit tests (no CEF dependency).
+add_executable(dask_storage_tests
+    tests/storage_test.cpp)
+target_include_directories(dask_storage_tests PRIVATE app/native)
+target_link_libraries(dask_storage_tests PRIVATE dask_storage)
+dask_finalize_target(dask_storage_tests)
 
 # Filter engine unit tests (no CEF dependency; run manually or via the
 # smoke test).

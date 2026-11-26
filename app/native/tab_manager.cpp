@@ -2,9 +2,11 @@
 // threading contract.
 #include "tab_manager.h"
 
+#include <shellapi.h>
 #include <shlobj.h>
 #include <shlwapi.h>
 
+#include <atomic>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -16,6 +18,7 @@
 #include "include/cef_values.h"
 #include "include/wrapper/cef_message_router.h"
 #include "adblock/site_util.h"
+#include "storage/download_filename.h"
 
 namespace dask {
 namespace {
@@ -37,6 +40,40 @@ std::wstring Trim(const std::wstring& s) {
   if (a == std::wstring::npos) return L"";
   const size_t b = s.find_last_not_of(L" \t\r\n");
   return s.substr(a, b - a + 1);
+}
+
+// UTF-8 <-> UTF-16 conversions for storage strings.
+std::string Utf8FromWide(const std::wstring& s) {
+  if (s.empty()) return std::string();
+  const int n = ::WideCharToMultiByte(CP_UTF8, 0, s.c_str(),
+                                      static_cast<int>(s.size()), nullptr, 0,
+                                      nullptr, nullptr);
+  std::string out(n, '\0');
+  ::WideCharToMultiByte(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()),
+                        out.data(), n, nullptr, nullptr);
+  return out;
+}
+
+std::wstring WideFromUtf8(const std::string& s) {
+  if (s.empty()) return std::wstring();
+  const int n = ::MultiByteToWideChar(CP_UTF8, 0, s.c_str(),
+                                      static_cast<int>(s.size()), nullptr, 0);
+  std::wstring out(n, L'\0');
+  ::MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()),
+                        out.data(), n);
+  return out;
+}
+
+// Known Downloads folder (created when missing).
+std::wstring DownloadsDir() {
+  PWSTR raw = nullptr;
+  if (::SHGetKnownFolderPath(FOLDERID_Downloads, 0, nullptr, &raw) != S_OK) {
+    return L"";
+  }
+  std::wstring dir = raw;
+  ::CoTaskMemFree(raw);
+  ::CreateDirectoryW(dir.c_str(), nullptr);
+  return dir;
 }
 
 std::wstring AppDataDir() {
@@ -184,7 +221,7 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
       } else if (!IsHttpUrl(url) && url.rfind(kDaskUiOrigin, 0) != 0) {
         url = kNewTabUrl;  // only http(s) / internal UI targets are accepted
       }
-      mgr_->CreateTab(url);
+      mgr_->CreateTab(url, dict->GetBool("private"));
     } else if (type == "closeTab") {
       mgr_->CloseTab(dict->GetInt("tabId"));
     } else if (type == "activateTab") {
@@ -219,6 +256,77 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
       mgr_->ClearAllCookies();
     } else if (type == "updateFilterLists") {
       mgr_->UpdateFilterLists();
+    } else if (type == "toggleBookmark") {
+      mgr_->ToggleBookmark(dict->GetString("title").ToWString(),
+                           dict->GetString("url").ToWString());
+    } else if (type == "removeBookmark") {
+      mgr_->RemoveBookmark(dict->GetInt("id"));
+    } else if (type == "updateBookmark") {
+      mgr_->UpdateBookmark(dict->GetInt("id"),
+                           dict->GetString("title").ToWString(),
+                           dict->GetString("url").ToWString());
+    } else if (type == "searchHistory") {
+      // Async DB query; the callback is answered from the DB thread.
+      const std::string query =
+          Utf8FromWide(dict->GetString("query").ToWString());
+      int limit = dict->GetInt("limit");
+      if (limit <= 0) limit = 50;
+      if (limit > 500) limit = 500;
+      TabManager* mgr = mgr_;
+      mgr_->PostToDb([mgr, callback, query, limit]() {
+        if (!mgr->history_store_) {
+          callback->Failure(503, "database unavailable");
+          return;
+        }
+        std::vector<storage::HistoryItem> rows;
+        std::string err;
+        if (!mgr->history_store_->Search(query, limit, &rows, &err)) {
+          callback->Failure(500, err);
+          return;
+        }
+        // Build the response JSON via CEF values.
+        CefRefPtr<CefDictionaryValue> root = CefDictionaryValue::Create();
+        CefRefPtr<CefListValue> items = CefListValue::Create();
+        for (size_t i = 0; i < rows.size(); ++i) {
+          CefRefPtr<CefDictionaryValue> item = CefDictionaryValue::Create();
+          item->SetInt("id", static_cast<int>(rows[i].id));
+          item->SetString("url", rows[i].url);
+          item->SetString("title", rows[i].title);
+          item->SetInt("visitedAt", static_cast<int>(rows[i].visited_at));
+          items->SetDictionary(i, item);
+        }
+        root->SetList("items", items);
+        CefRefPtr<CefValue> value = CefValue::Create();
+        value->SetDictionary(root);
+        callback->Success(
+            CefWriteJSON(value, cef_json_writer_options_t(0)).ToString());
+      });
+      return true;
+    } else if (type == "clearHistory") {
+      mgr_->ClearHistory(dict->GetInt("days"));
+    } else if (type == "setHistoryEnabled") {
+      mgr_->SetHistoryEnabled(dict->GetBool("enabled"));
+      mgr_->PushUiEvent();
+    } else if (type == "setRetentionDays") {
+      mgr_->SetRetentionDays(dict->GetInt("days"));
+    } else if (type == "setRestoreSession") {
+      mgr_->SetRestoreSession(dict->GetBool("enabled"));
+    } else if (type == "cancelDownload") {
+      mgr_->CancelDownload(dict->GetInt("id"));
+    } else if (type == "removeDownload") {
+      const int64_t id = dict->GetInt("id");
+      TabManager* mgr = mgr_;
+      mgr_->CancelDownload(id);
+      mgr_->PostToDb([mgr, id]() {
+        if (!mgr->downloads_store_) return;
+        std::string err;
+        mgr->downloads_store_->Delete(id, &err);
+        mgr->RefreshStorageCachesOnDb();
+      });
+    } else if (type == "openDownload") {
+      mgr_->OpenDownload(dict->GetInt("id"));
+    } else if (type == "openDownloadsFolder") {
+      mgr_->OpenDownloadsFolder();
     } else if (type == "setQuickLinks") {
       CefRefPtr<CefListValue> list = dict->GetList("links");
       if (list && list->GetSize() <= 24) {
@@ -373,6 +481,7 @@ class DaskResourceHandler : public CefResourceRequestHandler,
 
 class TabClient : public CefClient,
                   public CefDisplayHandler,
+                  public CefDownloadHandler,
                   public CefLoadHandler,
                   public CefLifeSpanHandler,
                   public CefRequestHandler {
@@ -428,6 +537,26 @@ class TabClient : public CefClient,
                                    mgr_->TabSiteHost(tab_id_));
   }
 
+  // CefDownloadHandler (Phase 4). Methods run on the browser UI thread.
+  CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
+
+  bool OnBeforeDownload(
+      CefRefPtr<CefBrowser> browser,
+      CefRefPtr<CefDownloadItem> download_item,
+      const CefString& suggested_name,
+      CefRefPtr<CefBeforeDownloadCallback> callback) override {
+    (void)browser;
+    return mgr_->OnBeforeDownload(tab_id_, download_item,
+                                  suggested_name.ToWString(), callback);
+  }
+
+  void OnDownloadUpdated(CefRefPtr<CefBrowser> browser,
+                         CefRefPtr<CefDownloadItem> download_item,
+                         CefRefPtr<CefDownloadItemCallback> callback) override {
+    (void)browser;
+    mgr_->OnDownloadUpdated(tab_id_, download_item, callback);
+  }
+
   // CefDisplayHandler
   void OnTitleChange(CefRefPtr<CefBrowser> browser,
                      const CefString& title) override {
@@ -446,7 +575,11 @@ class TabClient : public CefClient,
                        CefRefPtr<CefFrame> frame,
                        const CefString& url) override {
     (void)browser;
-    if (frame->IsMain()) mgr_->OnAddressChanged(tab_id_, url.ToWString());
+    if (frame->IsMain()) {
+      mgr_->OnAddressChanged(tab_id_, url.ToWString());
+      mgr_->RecordVisit(tab_id_, url.ToWString(),
+                        mgr_->TabTitle(tab_id_));
+    }
   }
 
   // CefLoadHandler
@@ -539,6 +672,21 @@ void TabManager::Initialize(HWND main_hwnd) {
 }
 
 void TabManager::Start() {
+  // Phase 4: load preferences synchronously first (temporary connection) so
+  // the restore decision below is correct.
+  {
+    storage::Database prefs_db;
+    std::string db_err;
+    if (prefs_db.Open(Utf8FromWide(std::wstring(AppDataDir()) + L"\\dask.db"),
+                      &db_err) &&
+        prefs_db.Migrate(&db_err)) {
+      storage::Settings prefs(&prefs_db);
+      prefs.GetBool("restoreSession", true, &restore_session_, &db_err);
+      prefs.GetBool("historyEnabled", true, &history_enabled_, &db_err);
+      prefs.GetInt("historyRetentionDays", 90, &retention_days_, &db_err);
+    }
+  }
+
   // Restore the persisted session (read on this thread, applied on CEF's).
   std::ifstream file(std::wstring(AppDataDir()) + L"\\" + kSessionFile,
                      std::ios::binary);
@@ -573,7 +721,7 @@ void TabManager::Start() {
         if (!restored.empty()) quick_links_ = std::move(restored);
       }
       CefRefPtr<CefListValue> tabs = dict->GetList("tabs");
-      if (tabs) {
+      if (tabs && restore_session_) {
         for (size_t i = 0;
              i < tabs->GetSize() && i < static_cast<size_t>(kMaxTabs); ++i) {
           CefRefPtr<CefDictionaryValue> item = tabs->GetDictionary(i);
@@ -594,6 +742,9 @@ void TabManager::Start() {
   if (!has_session || restored_tabs == 0) {
     CreateTab(kNewTabUrl);
   }
+
+  // Phase 4: open the local database (thread + stores).
+  StartDatabase();
 
   // The UI browser (React toolbar) on top of the window. Tab id 0.
   PostToCef([this]() {
@@ -640,8 +791,8 @@ void TabManager::RequestCloseAll() {
 
 // ---- Operations -----------------------------------------------------------
 
-void TabManager::CreateTab(std::wstring url) {
-  PostToCef([this, url]() {
+void TabManager::CreateTab(std::wstring url, bool private_tab) {
+  PostToCef([this, url, private_tab]() {
     if (closing_all_ || tabs_.size() >= static_cast<size_t>(kMaxTabs)) return;
     const bool internal = url == kNewTabUrl ||
                           url.rfind(kDaskUiOrigin, 0) == 0;
@@ -658,6 +809,7 @@ void TabManager::CreateTab(std::wstring url) {
     Tab tab;
     tab.id = id;
     tab.internal = internal;
+    tab.private_flag = private_tab;
     tab.url = url;
 
     RECT rc;
@@ -672,10 +824,20 @@ void TabManager::CreateTab(std::wstring url) {
     CefWindowInfo info;
     info.SetAsChild(host, CefRect(0, 0, width, height));
     CefBrowserSettings settings;
+    // Private tabs use a shared in-memory request context: cookies and cache
+    // never touch the default profile storage.
+    CefRefPtr<CefRequestContext> context;
+    if (private_tab) {
+      if (!private_context_) {
+        private_context_ = CefRequestContext::CreateContext(
+            CefRequestContextSettings(), nullptr);
+      }
+      context = private_context_;
+    }
     CefString url_str;
     url_str.FromWString(url);
     CefBrowserHost::CreateBrowser(info, client, url_str, settings, nullptr,
-                                  nullptr);
+                                  context);
 
     tabs_.push_back(std::move(tab));
     {
@@ -982,10 +1144,49 @@ std::string TabManager::BuildStateJson(bool focus_address) {
     item->SetString("url", tab.url);
     item->SetBool("loading", tab.loading);
     item->SetBool("internal", tab.internal);
+    item->SetBool("private", tab.private_flag);
     AppendDict(tabs_list, item);
   }
   root_dict->SetList("tabs", tabs_list);
   root_dict->SetInt("activeTabId", static_cast<int>(active_tab_id_));
+
+  // ---- Storage state (Phase 4) ----
+  CefRefPtr<CefListValue> bm_list = CefListValue::Create();
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    for (size_t i = 0; i < bookmarks_cache_.size(); ++i) {
+      CefRefPtr<CefDictionaryValue> item = CefDictionaryValue::Create();
+      item->SetInt("id", static_cast<int>(bookmarks_cache_[i].id));
+      item->SetString("title", bookmarks_cache_[i].title);
+      item->SetString("url", bookmarks_cache_[i].url);
+      bm_list->SetDictionary(i, item);
+    }
+  }
+  root_dict->SetList("bookmarks", bm_list);
+
+  CefRefPtr<CefListValue> dl_list = CefListValue::Create();
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    for (size_t i = 0; i < downloads_cache_.size(); ++i) {
+      CefRefPtr<CefDictionaryValue> item = CefDictionaryValue::Create();
+      item->SetInt("id", static_cast<int>(downloads_cache_[i].id));
+      item->SetString("filename", downloads_cache_[i].filename);
+      item->SetString("url", downloads_cache_[i].url);
+      item->SetInt("state", downloads_cache_[i].state);
+      item->SetInt("received", static_cast<int>(downloads_cache_[i].received));
+      item->SetInt("total", static_cast<int>(downloads_cache_[i].total));
+      dl_list->SetDictionary(i, item);
+    }
+  }
+  root_dict->SetList("downloads", dl_list);
+
+  root_dict->SetBool("restoreSession", restore_session_);
+  root_dict->SetBool("historyEnabled", history_enabled_);
+  root_dict->SetInt("retentionDays", retention_days_);
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    if (!db_note_.empty()) root_dict->SetString("dbNote", db_note_);
+  }
 
   CefRefPtr<CefDictionaryValue> engine = CefDictionaryValue::Create();
   engine->SetString("id", engine_.id);
@@ -1080,7 +1281,7 @@ void TabManager::SaveSession() {
   CefRefPtr<CefDictionaryValue> root_dict = CefDictionaryValue::Create();
   CefRefPtr<CefListValue> tabs_list = CefListValue::Create();
   for (const Tab& tab : tabs_) {
-    if (tab.closing) continue;
+    if (tab.closing || tab.private_flag) continue;
     CefRefPtr<CefDictionaryValue> item = CefDictionaryValue::Create();
     item->SetString("url", tab.url);
     AppendDict(tabs_list, item);
@@ -1122,6 +1323,14 @@ std::wstring TabManager::TabSiteHost(int64_t tab_id) {
   std::lock_guard<std::mutex> lock(blocked_mutex_);
   const auto it = tab_site_.find(tab_id);
   return it == tab_site_.end() ? std::wstring() : it->second;
+}
+
+std::wstring TabManager::TabTitle(int64_t tab_id) {
+  // CEF UI thread.
+  for (const Tab& tab : tabs_) {
+    if (tab.id == tab_id) return tab.title;
+  }
+  return std::wstring();
 }
 
 bool TabManager::ShouldBlockRequest(const std::wstring& url,
@@ -1196,6 +1405,416 @@ void TabManager::UpdateFilterLists() {
     PushUiEvent();
   });
   PushUiEvent();  // reflect the "loading" status right away
+}
+
+// ---- Storage (Phase 4) ------------------------------------------------------
+
+void TabManager::StartDatabase() {
+  // CEF UI thread. The DB thread owns the SQLite connection.
+  const std::string db_path =
+      Utf8FromWide(std::wstring(AppDataDir()) + L"\\dask.db");
+  db_quit_ = false;
+  db_thread_ = std::thread([this, db_path]() {
+    db_ = std::make_unique<storage::Database>();
+    std::string err;
+    if (!db_->Open(db_path, &err) || !db_->Migrate(&err)) {
+      if (db_->corrupted()) {
+        // Understandable message + fresh start: the corrupted file is gone.
+        std::string recover;
+        if (db_->Recreate(&recover)) {
+          err.clear();
+        } else {
+          err = "storage failure: " + recover;
+        }
+      }
+      if (!err.empty()) {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        db_note_ = L"تعذّر فتح قاعدة البيانات المحلية (سيبدأ التخزين من جديد): " +
+                   WideFromUtf8(err);
+      }
+    }
+    if (db_->opened()) {
+      bookmarks_store_ = std::make_unique<storage::Bookmarks>(db_.get());
+      history_store_ = std::make_unique<storage::History>(db_.get());
+      downloads_store_ = std::make_unique<storage::Downloads>(db_.get());
+      settings_store_ = std::make_unique<storage::Settings>(db_.get());
+
+      std::string db_err;
+      settings_store_->GetBool("restoreSession", true, &restore_session_,
+                               &db_err);
+      settings_store_->GetBool("historyEnabled", true, &history_enabled_,
+                               &db_err);
+      settings_store_->GetInt("historyRetentionDays", 90, &retention_days_,
+                              &db_err);
+      if (history_enabled_ && retention_days_ > 0) {
+        const int64_t now = static_cast<int64_t>(time(nullptr));
+        history_store_->Prune(now - retention_days_ * 86400, &db_err);
+      }
+      // First run: seed bookmarks with the default quick links.
+      std::vector<storage::Bookmark> seeded;
+      bookmarks_store_->Search("", &seeded, &db_err);
+      if (seeded.empty()) {
+        for (const QuickLink& link : kDefaultLinks) {
+          int64_t sid = 0;
+          bookmarks_store_->Add(Utf8FromWide(link.title),
+                                Utf8FromWide(link.url), &sid, &db_err);
+        }
+      }
+      RefreshStorageCachesOnDb();
+    }
+
+    while (true) {
+      std::function<void()> task;
+      {
+        std::unique_lock<std::mutex> lock(db_mutex_);
+        db_cv_.wait(lock, [this]() { return db_quit_ || !db_queue_.empty(); });
+        if (db_quit_) break;
+        if (db_queue_.empty()) continue;
+        task = std::move(db_queue_.front());
+        db_queue_.pop_front();
+      }
+      task();
+    }
+
+    // Tear down on this thread (SQLite objects are thread-confined).
+    bookmarks_store_.reset();
+    history_store_.reset();
+    downloads_store_.reset();
+    settings_store_.reset();
+    db_.reset();
+  });
+}
+
+void TabManager::StopDatabase() {
+  if (!db_thread_.joinable()) return;
+  {
+    std::lock_guard<std::mutex> lock(db_mutex_);
+    db_quit_ = true;
+  }
+  db_cv_.notify_all();
+  db_thread_.join();
+}
+
+void TabManager::PostToDb(std::function<void()> fn) {
+  {
+    std::lock_guard<std::mutex> lock(db_mutex_);
+    db_queue_.push_back(std::move(fn));
+  }
+  db_cv_.notify_all();
+}
+
+// DB thread: rebuild the UI-facing mirrors and hand them to the CEF UI
+// thread.
+void TabManager::RefreshStorageCachesOnDb() {
+  if (!bookmarks_store_ || !downloads_store_) return;
+  std::string err;
+  std::vector<storage::Bookmark> bm_rows;
+  bookmarks_store_->Search("", &bm_rows, &err);
+  std::vector<storage::DownloadItemRow> dl_rows;
+  downloads_store_->List(30, &dl_rows, &err);
+  if (!err.empty()) {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    db_note_ = L"خطأ في قاعدة البيانات: " + WideFromUtf8(err);
+  }
+  PostToCef([this, bm_rows = std::move(bm_rows),
+             dl_rows = std::move(dl_rows)]() {
+    std::vector<BookmarkUi> bm;
+    for (const storage::Bookmark& row : bm_rows) {
+      BookmarkUi item;
+      item.id = row.id;
+      item.title = WideFromUtf8(row.title);
+      item.url = WideFromUtf8(row.url);
+      bm.push_back(std::move(item));
+    }
+    std::vector<DownloadUi> dl;
+    for (const storage::DownloadItemRow& row : dl_rows) {
+      DownloadUi item;
+      item.id = row.id;
+      item.url = WideFromUtf8(row.url);
+      item.path = WideFromUtf8(row.path);
+      item.filename = WideFromUtf8(row.filename);
+      item.state = row.state;
+      item.received = row.received;
+      item.total = row.total;
+      dl.push_back(std::move(item));
+    }
+    {
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      bookmarks_cache_ = std::move(bm);
+      downloads_cache_ = std::move(dl);
+    }
+    PushUiEvent();
+  });
+}
+
+void TabManager::RecordVisit(int64_t tab_id, const std::wstring& url,
+                             const std::wstring& title) {
+  // CEF UI thread.
+  if (!history_enabled_) return;
+  bool private_tab = false;
+  for (const Tab& tab : tabs_) {
+    if (tab.id == tab_id) {
+      private_tab = tab.private_flag || tab.internal;
+      break;
+    }
+  }
+  if (private_tab) return;  // private tabs never reach storage
+  if (!(url.rfind(L"http://", 0) == 0 || url.rfind(L"https://", 0) == 0)) {
+    return;
+  }
+  PostToDb([this, url = Utf8FromWide(url), title = Utf8FromWide(title)]() {
+    if (!history_store_) return;
+    int64_t id = 0;
+    std::string err;
+    history_store_->Add(url, title, static_cast<int64_t>(time(nullptr)), &id,
+                        &err);
+  });
+}
+
+void TabManager::ToggleBookmarkActive() {
+  // CEF UI thread (Ctrl+D).
+  Tab* tab = FindTab(active_tab_id_);
+  if (!tab || tab->internal || tab->private_flag || tab->closing) return;
+  if (!(tab->url.rfind(L"http://", 0) == 0 ||
+        tab->url.rfind(L"https://", 0) == 0)) {
+    return;
+  }
+  ToggleBookmark(tab->title.empty() ? tab->url : tab->title, tab->url);
+}
+
+void TabManager::ToggleBookmark(const std::wstring& title,
+                                const std::wstring& url) {
+  // CEF UI thread.
+  const std::string url_utf8 = Utf8FromWide(url);
+  bool exists = false;
+  int64_t existing_id = 0;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    for (const BookmarkUi& bm : bookmarks_cache_) {
+      if (bm.url == url) {
+        exists = true;
+        existing_id = bm.id;
+        break;
+      }
+    }
+  }
+  PostToDb([this, exists, existing_id, url_utf8,
+            title_utf8 = Utf8FromWide(title)]() {
+    if (!bookmarks_store_) return;
+    std::string err;
+    if (exists) {
+      bookmarks_store_->Remove(existing_id, &err);
+    } else {
+      int64_t id = 0;
+      bookmarks_store_->Add(title_utf8, url_utf8, &id, &err);
+    }
+    RefreshStorageCachesOnDb();
+  });
+}
+
+void TabManager::RemoveBookmark(int64_t id) {
+  PostToDb([this, id]() {
+    if (!bookmarks_store_) return;
+    std::string err;
+    bookmarks_store_->Remove(id, &err);
+    RefreshStorageCachesOnDb();
+  });
+}
+
+void TabManager::UpdateBookmark(int64_t id, const std::wstring& title,
+                                const std::wstring& url) {
+  PostToDb([this, id, title = Utf8FromWide(title),
+            url = Utf8FromWide(url)]() {
+    if (!bookmarks_store_) return;
+    std::string err;
+    bookmarks_store_->Update(id, title, url, &err);
+    RefreshStorageCachesOnDb();
+  });
+}
+
+void TabManager::ClearHistory(int days) {
+  PostToDb([this, days]() {
+    if (!history_store_) return;
+    std::string err;
+    history_store_->Clear(days, &err);
+  });
+}
+
+void TabManager::SetHistoryEnabled(bool enabled) {
+  history_enabled_ = enabled;
+  PostToDb([this, enabled]() {
+    if (!settings_store_) return;
+    std::string err;
+    settings_store_->SetBool("historyEnabled", enabled, &err);
+  });
+}
+
+void TabManager::SetRetentionDays(int days) {
+  retention_days_ = days;
+  PostToDb([this, days]() {
+    if (!settings_store_) return;
+    std::string err;
+    settings_store_->SetInt("historyRetentionDays", days, &err);
+    if (history_enabled_ && days > 0) {
+      history_store_->Prune(static_cast<int64_t>(time(nullptr)) -
+                                static_cast<int64_t>(days) * 86400,
+                            &err);
+    }
+  });
+}
+
+void TabManager::SetRestoreSession(bool enabled) {
+  restore_session_ = enabled;
+  PostToDb([this, enabled]() {
+    if (!settings_store_) return;
+    std::string err;
+    settings_store_->SetBool("restoreSession", enabled, &err);
+  });
+}
+
+// ---- Downloads (CEF UI thread) ----------------------------------------------
+
+bool TabManager::OnBeforeDownload(int64_t tab_id,
+                                  CefRefPtr<CefDownloadItem> item,
+                                  const std::wstring& suggested_name,
+                                  CefRefPtr<CefBeforeDownloadCallback> callback) {
+  bool private_tab = false;
+  for (const Tab& tab : tabs_) {
+    if (tab.id == tab_id) {
+      private_tab = tab.private_flag;
+      break;
+    }
+  }
+  const std::string name =
+      storage::SanitizeDownloadFilename(Utf8FromWide(suggested_name));
+  const std::wstring path = storage::UniqueDownloadPath(DownloadsDir(), name);
+  const uint32_t cef_id = item->GetId();
+  if (private_tab) {
+    // Private tabs: the file is saved but never reaches persistent storage.
+    download_ids_[cef_id] = 0;
+    PostToCef([this, name]() {
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      DownloadUi ui;
+      ui.id = 0;
+      ui.filename = WideFromUtf8(name);
+      ui.state = storage::kDownloadActive;
+      downloads_cache_.push_back(std::move(ui));
+    });
+  } else {
+    const std::string path_utf8 = Utf8FromWide(path);
+    const std::string url_utf8 =
+        Utf8FromWide(item->GetURL().ToWString());
+    const uint32_t cef = cef_id;
+    PostToDb([this, cef, url_utf8, path_utf8, name]() {
+      if (!downloads_store_) return;
+      std::string err;
+      int64_t db_id = 0;
+      downloads_store_->Insert(url_utf8, path_utf8, name,
+                               static_cast<int64_t>(time(nullptr)), &db_id,
+                               &err);
+      RefreshStorageCachesOnDb();
+      // Register the mapping only after the insert committed.
+      PostToCef([this, cef, db_id]() {
+        download_ids_[cef] = db_id;
+        if (db_id > 0) download_db_to_cef_[db_id] = cef;
+      });
+    });
+  }
+  callback->Continue(path, false);
+  return true;
+}
+
+void TabManager::OnDownloadUpdated(int64_t tab_id,
+                                   CefRefPtr<CefDownloadItem> item,
+                                   CefRefPtr<CefDownloadItemCallback> callback) {
+  (void)tab_id;
+  const uint32_t cef_id = item->GetId();
+
+  if (item->IsInProgress()) {
+    active_downloads_[cef_id] = callback;  // kept so the user can cancel
+    const auto ids = download_ids_.find(cef_id);
+    const int64_t db_id = ids == download_ids_.end() ? 0 : ids->second;
+    // Live progress on the UI mirror.
+    {
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      for (DownloadUi& row : downloads_cache_) {
+        if (db_id != 0 && row.id == db_id) {
+          row.state = storage::kDownloadActive;
+          row.received = item->GetReceivedBytes();
+          row.total = item->GetTotalBytes();
+        }
+      }
+    }
+    if (db_id > 0) {
+      const int64_t received = item->GetReceivedBytes();
+      const int64_t total = item->GetTotalBytes();
+      PostToDb([this, db_id, received, total]() {
+        if (!downloads_store_) return;
+        std::string err;
+        downloads_store_->UpdateProgress(db_id, storage::kDownloadActive,
+                                         received, total, &err);
+      });
+    }
+    return;
+  }
+  // Terminal state.
+  active_downloads_.erase(cef_id);
+  int state = storage::kDownloadFailed;
+  if (item->IsCanceled()) state = storage::kDownloadCanceled;
+  else if (item->IsComplete()) state = storage::kDownloadComplete;
+  const auto ids = download_ids_.find(cef_id);
+  const int64_t db_id = ids == download_ids_.end() ? 0 : ids->second;
+  download_ids_.erase(cef_id);
+  download_db_to_cef_.erase(db_id);
+  if (db_id > 0) {
+    const int64_t received = item->GetReceivedBytes();
+    const int64_t total = item->GetTotalBytes();
+    PostToDb([this, db_id, state, received, total]() {
+      if (!downloads_store_) return;
+      std::string err;
+      downloads_store_->UpdateProgress(db_id, state, received, total, &err);
+      RefreshStorageCachesOnDb();
+    });
+  } else {
+    PushUiEvent();
+  }
+}
+
+void TabManager::CancelDownload(int64_t db_id) {
+  const auto it = download_db_to_cef_.find(db_id);
+  if (it == download_db_to_cef_.end()) return;
+  const auto cb = active_downloads_.find(it->second);
+  if (cb != active_downloads_.end()) {
+    cb->second->Cancel();
+  }
+}
+
+void TabManager::OpenDownload(int64_t db_id) {
+  std::wstring path;
+  int state = -1;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    for (const DownloadUi& row : downloads_cache_) {
+      if (row.id == db_id) {
+        path = row.path;
+        state = row.state;
+        break;
+      }
+    }
+  }
+  if (state == storage::kDownloadComplete && !path.empty() &&
+      ::GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) {
+    ::ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr,
+                    SW_SHOWNORMAL);
+  }
+}
+
+void TabManager::OpenDownloadsFolder() {
+  const std::wstring dir = DownloadsDir();
+  if (!dir.empty()) {
+    ::ShellExecuteW(nullptr, L"open", dir.c_str(), nullptr, nullptr,
+                    SW_SHOWNORMAL);
+  }
 }
 
 }  // namespace dask
