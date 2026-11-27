@@ -415,4 +415,192 @@ bool Permissions::ClearAll(std::string* error) {
   return true;
 }
 
+
+// ---- Passwords (Phase 10) ---------------------------------------------------
+
+bool Passwords::Add(const std::string& origin, const std::string& username,
+                    const std::string& secret_b64, int64_t* id,
+                    std::string* error) {
+  // Same origin+username replaces the secret (a password change, usually).
+  auto stmt = db_->Prepare(
+      "INSERT INTO passwords (origin, username, secret, updated_at) "
+      "VALUES (?, ?, ?, strftime('%s','now')) "
+      "ON CONFLICT(origin, username) DO UPDATE SET "
+      "  secret = excluded.secret, updated_at = excluded.updated_at");
+  if (!stmt) {
+    if (error) *error = "database prepare failed";
+    return false;
+  }
+  // The origin+username uniqueness comes from a unique index created lazily
+  // below; INSERT..ON CONFLICT needs it to exist.
+  stmt.reset();
+  auto ensure = db_->Prepare(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_pw_origin_user "
+      "ON passwords (origin, username)");
+  if (!ensure || !ensure->Run()) {
+    if (error) *error = "database prepare failed";
+    return false;
+  }
+  stmt = db_->Prepare(
+      "INSERT INTO passwords (origin, username, secret, updated_at) "
+      "VALUES (?, ?, ?, strftime('%s','now')) "
+      "ON CONFLICT(origin, username) DO UPDATE SET "
+      "  secret = excluded.secret, updated_at = excluded.updated_at");
+  if (!stmt) {
+    if (error) *error = "database prepare failed";
+    return false;
+  }
+  stmt->Bind(1, origin).Bind(2, username).Bind(3, secret_b64);
+  if (!stmt->Run()) {
+    if (error) *error = stmt->error();
+    return false;
+  }
+  if (id) *id = db_->LastInsertId();
+  return true;
+}
+
+bool Passwords::FindByOrigin(const std::string& origin,
+                             std::vector<PasswordRow>* out,
+                             std::string* error) {
+  out->clear();
+  auto stmt = db_->Prepare(
+      "SELECT id, origin, username, secret, updated_at FROM passwords "
+      "WHERE origin = ? ORDER BY updated_at DESC");
+  if (!stmt) {
+    if (error) *error = "database prepare failed";
+    return false;
+  }
+  stmt->Bind(1, origin);
+  while (stmt->Step()) {
+    PasswordRow row;
+    row.id = stmt->ColInt(0);
+    row.origin = stmt->ColText(1);
+    row.username = stmt->ColText(2);
+    row.secret = stmt->ColText(3);
+    row.updated_at = stmt->ColInt(4);
+    out->push_back(std::move(row));
+  }
+  return true;
+}
+
+bool Passwords::List(std::vector<PasswordRow>* out, std::string* error) {
+  out->clear();
+  auto stmt = db_->Prepare(
+      "SELECT id, origin, username, secret, updated_at FROM passwords "
+      "ORDER BY origin, username");
+  if (!stmt) {
+    if (error) *error = "database prepare failed";
+    return false;
+  }
+  while (stmt->Step()) {
+    PasswordRow row;
+    row.id = stmt->ColInt(0);
+    row.origin = stmt->ColText(1);
+    row.username = stmt->ColText(2);
+    row.secret = stmt->ColText(3);
+    row.updated_at = stmt->ColInt(4);
+    out->push_back(std::move(row));
+  }
+  return true;
+}
+
+bool Passwords::Remove(int64_t id, std::string* error) {
+  auto stmt = db_->Prepare("DELETE FROM passwords WHERE id = ?");
+  if (!stmt) {
+    if (error) *error = "database prepare failed";
+    return false;
+  }
+  stmt->Bind(1, id);
+  if (!stmt->Run()) {
+    if (error) *error = stmt->error();
+    return false;
+  }
+  return true;
+}
+
+bool Passwords::ClearAll(std::string* error) {
+  auto stmt = db_->Prepare("DELETE FROM passwords");
+  if (!stmt) {
+    if (error) *error = "database prepare failed";
+    return false;
+  }
+  if (!stmt->Run()) {
+    if (error) *error = stmt->error();
+    return false;
+  }
+  return true;
+}
+
+// ---- UserScripts (Phase 10) -------------------------------------------------
+
+bool UserScripts::Add(const std::string& name, const std::string& matches,
+                      const std::string& code, int64_t* id,
+                      std::string* error) {
+  auto stmt = db_->Prepare(
+      "INSERT INTO user_scripts (name, matches, code, enabled, created_at) "
+      "VALUES (?, ?, ?, 1, strftime('%s','now'))");
+  if (!stmt) {
+    if (error) *error = "database prepare failed";
+    return false;
+  }
+  stmt->Bind(1, name).Bind(2, matches).Bind(3, code);
+  if (!stmt->Run()) {
+    if (error) *error = stmt->error();
+    return false;
+  }
+  if (id) *id = db_->LastInsertId();
+  return true;
+}
+
+bool UserScripts::List(std::vector<UserScriptRow>* out, std::string* error) {
+  out->clear();
+  auto stmt = db_->Prepare(
+      "SELECT id, name, matches, code, enabled, created_at FROM user_scripts "
+      "ORDER BY created_at DESC");
+  if (!stmt) {
+    if (error) *error = "database prepare failed";
+    return false;
+  }
+  while (stmt->Step()) {
+    UserScriptRow row;
+    row.id = stmt->ColInt(0);
+    row.name = stmt->ColText(1);
+    row.matches = stmt->ColText(2);
+    row.code = stmt->ColText(3);
+    row.enabled = stmt->ColInt(4) != 0;
+    row.created_at = stmt->ColInt(5);
+    out->push_back(std::move(row));
+  }
+  return true;
+}
+
+bool UserScripts::SetEnabled(int64_t id, bool enabled, std::string* error) {
+  auto stmt = db_->Prepare(
+      "UPDATE user_scripts SET enabled = ? WHERE id = ?");
+  if (!stmt) {
+    if (error) *error = "database prepare failed";
+    return false;
+  }
+  stmt->Bind(1, enabled ? 1 : 0).Bind(2, id);
+  if (!stmt->Run()) {
+    if (error) *error = stmt->error();
+    return false;
+  }
+  return true;
+}
+
+bool UserScripts::Remove(int64_t id, std::string* error) {
+  auto stmt = db_->Prepare("DELETE FROM user_scripts WHERE id = ?");
+  if (!stmt) {
+    if (error) *error = "database prepare failed";
+    return false;
+  }
+  stmt->Bind(1, id);
+  if (!stmt->Run()) {
+    if (error) *error = stmt->error();
+    return false;
+  }
+  return true;
+}
+
 }  // namespace dask::storage

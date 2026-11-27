@@ -11,7 +11,10 @@ import {
   type HistoryItemUi,
 } from '../common/bridge'
 
-type Section = 'general' | 'privacy' | 'profiles' | 'permissions' | 'bookmarks' | 'history' | 'downloads' | 'about'
+type Section = 'general' | 'privacy' | 'profiles' | 'permissions' | 'bookmarks' | 'history' | 'downloads' | 'passwords' | 'extensions' | 'about'
+
+type PwRow = { id: number; origin: string; username: string; updatedAt: number }
+type ScriptRow = { id: number; name: string; matches: string; code: string; enabled: boolean }
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: 'general', label: 'عام' },
@@ -21,6 +24,8 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: 'bookmarks', label: 'المفضلة' },
   { id: 'history', label: 'السجل' },
   { id: 'downloads', label: 'التنزيلات' },
+  { id: 'passwords', label: 'كلمات المرور' },
+  { id: 'extensions', label: 'الإضافات' },
   { id: 'about', label: 'حول' },
 ]
 
@@ -47,7 +52,8 @@ function App() {
     // Menu items link to specific sections: settings.html#history etc.
     const h = window.location.hash.replace('#', '')
     return (['general', 'privacy', 'profiles', 'permissions', 'bookmarks',
-             'history', 'downloads', 'about'] as Section[]).includes(h as Section)
+             'history', 'downloads', 'passwords', 'extensions',
+             'about'] as Section[]).includes(h as Section)
       ? (h as Section)
       : 'general'
   })
@@ -57,6 +63,38 @@ function App() {
   const [bookmarkQuery, setBookmarkQuery] = useState('')
   const [newProfileName, setNewProfileName] = useState('')
   const [confirmOpen, setConfirmOpen] = useState<number | null>(null)
+  // Phase 10: password manager + extensions management.
+  const [pwRows, setPwRows] = useState<PwRow[]>([])
+  const [pwNote, setPwNote] = useState('')
+  const [scripts, setScripts] = useState<ScriptRow[]>([])
+  const [usName, setUsName] = useState('')
+  const [usMatches, setUsMatches] = useState('')
+  const [usCode, setUsCode] = useState('')
+  const [usNote, setUsNote] = useState('')
+  const [updateNote, setUpdateNote] = useState('')
+
+  useEffect(() => {
+    if (section === 'passwords') loadPw()
+    if (section === 'extensions') loadScripts()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [section])
+
+  const loadPw = () => {
+    void send({ type: 'pwList' }).then((raw) => {
+      try {
+        const parsed = JSON.parse(raw as string) as { items: PwRow[] }
+        setPwRows(parsed.items || [])
+      } catch { /* ignore */ }
+    }).catch(() => {})
+  }
+  const loadScripts = () => {
+    void send({ type: 'usList' }).then((raw) => {
+      try {
+        const parsed = JSON.parse(raw as string) as { items: ScriptRow[] }
+        setScripts(parsed.items || [])
+      } catch { /* ignore */ }
+    }).catch(() => {})
+  }
 
   useEffect(
     () =>
@@ -550,6 +588,147 @@ function App() {
         </section>
       )}
 
+      {section === 'passwords' && (
+        <section>
+          <h2>كلمات المرور المحفوظة</h2>
+          <p className="privacy-note">
+            محلي 100% — مشفّرة بـ DPAPI بمفتاح حساب ويندوز على هذا الجهاز فقط.
+            لا شيء يُرسل لأي سيرفر.
+          </p>
+          {pwNote && <p className="note">{pwNote}</p>}
+          {pwRows.length === 0 ? (
+            <p className="note">لا كلمات مرور محفوظة بعد — سأظهر زر «حفظ» تلقائياً بعد تسجيل الدخول لأي موقع.</p>
+          ) : (
+            <ul className="lists">
+              {pwRows.map((row) => (
+                <li key={row.id} className="bookmark-row">
+                  <div>
+                    <div>{row.origin}</div>
+                    <div className="list-url">{row.username || 'بدون اسم مستخدم'}</div>
+                  </div>
+                  <div className="btn-row">
+                    <button
+                      className="btn small"
+                      onClick={() => {
+                        void send({ type: 'pwDelete', id: row.id }).then(loadPw)
+                        setPwNote('تم حذف كلمة المرور.')
+                      }}
+                    >
+                      حذف
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {pwRows.length > 0 && (
+            <div className="btn-row" style={{ marginTop: 12 }}>
+              <button
+                className="btn"
+                onClick={() => {
+                  void send({ type: 'pwClearAll' }).then(() => {
+                    loadPw()
+                    setPwNote('تم حذف كل كلمات المرور المحفوظة.')
+                  })
+                }}
+              >
+                حذف الكل
+              </button>
+            </div>
+          )}
+        </section>
+      )}
+
+      {section === 'extensions' && (
+        <section>
+          <h2>الإضافات (سكربتات المستخدم)</h2>
+          <p className="privacy-note">
+            نظام سكربتات مستخدم بأسلوب Tampermonkey — JS تعمل في سياق الصفحة على
+            المواقع المطابقة. ملاحظة: إضافات Chrome Store الكاملة غير مدعومة في
+            CEF؛ هذا البديل يغطي أغلب حالات التعديل.
+          </p>
+          {scripts.length === 0 ? (
+            <p className="note">لا سكربتات مثبتة.</p>
+          ) : (
+            <ul className="lists">
+              {scripts.map((sc) => (
+                <li key={sc.id} className="bookmark-row">
+                  <div>
+                    <div>{sc.name} {sc.enabled ? '' : <em>(معطّل)</em>}</div>
+                    <div className="list-url">{sc.matches}</div>
+                  </div>
+                  <div className="btn-row">
+                    <button
+                      className="btn small"
+                      onClick={() =>
+                        void send({ type: 'usToggle', id: sc.id, enabled: !sc.enabled }).then(loadScripts)
+                      }
+                    >
+                      {sc.enabled ? 'تعطيل' : 'تفعيل'}
+                    </button>
+                    <button
+                      className="btn small"
+                      onClick={() => void send({ type: 'usRemove', id: sc.id }).then(loadScripts)}
+                    >
+                      حذف
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <h3>إضافة سكربت جديد</h3>
+          <div className="btn-row" style={{ gap: 8 }}>
+            <input
+              type="text"
+              placeholder="اسم السكربت"
+              value={usName}
+              onChange={(e) => setUsName(e.target.value)}
+              style={{ minWidth: 180 }}
+            />
+            <input
+              type="text"
+              placeholder="المواقع المطابقة (مثال: *.example.com)"
+              value={usMatches}
+              onChange={(e) => setUsMatches(e.target.value)}
+              style={{ minWidth: 240 }}
+              dir="ltr"
+            />
+          </div>
+          <textarea
+            placeholder="// كود JS — يعمل عند تحميل الصفحة"
+            value={usCode}
+            onChange={(e) => setUsCode(e.target.value)}
+            style={{
+              width: '100%', minHeight: 140, marginTop: 8,
+              background: 'var(--bg)', color: 'var(--text)',
+              border: '1px solid var(--border)', borderRadius: 8,
+              padding: 10, fontFamily: 'monospace', fontSize: 12,
+              direction: 'ltr', textAlign: 'left',
+            }}
+            dir="ltr"
+          />
+          {usNote && <p className="note">{usNote}</p>}
+          <div className="btn-row" style={{ marginTop: 8 }}>
+            <button
+              className="btn"
+              onClick={() => {
+                if (!usName.trim() || !usMatches.trim() || !usCode.trim()) {
+                  setUsNote('املأ الاسم والمواقع والكود.')
+                  return
+                }
+                void send({ type: 'usAdd', name: usName.trim(), matches: usMatches.trim(), code: usCode })
+                  .then(() => { loadScripts(); setUsName(''); setUsMatches(''); setUsCode(''); setUsNote('تم تثبيت السكربت.') })
+                  .catch(() => setUsNote('فشل التثبيت.'))
+              }}
+            >
+              تثبيت السكربت
+            </button>
+          </div>
+        </section>
+      )}
+
       {section === 'about' && (
         <section>
           <h2>حول DASK Browser</h2>
@@ -557,6 +736,26 @@ function App() {
             DASK Browser الإصدار 1.1.0 — متصفح ويب Windows أصلي على محرك
             Chromium المضمن عبر CEF (Chromium 158.0.8127.89).
           </p>
+          <div className="btn-row" style={{ marginTop: 10 }}>
+            <button
+              className="btn"
+              onClick={() => {
+                setUpdateNote('جاري الفحص…')
+                void send({ type: 'checkUpdate' }).then(() => {
+                  setTimeout(() => {
+                    setUpdateNote(
+                      state?.update?.available
+                        ? 'إصدار جديد متاح: ' + state.update.version + ' — سيتوفر زر التحديث في شريط الأدوات.'
+                        : 'أنت تستخدم أحدث إصدار.',
+                    )
+                  }, 1500)
+                })
+              }}
+            >
+              تحقق من وجود تحديث
+            </button>
+            {updateNote && <span className="note" style={{ alignSelf: 'center' }}>{updateNote}</span>}
+          </div>
           <p className="privacy-note">
             الترخيص: كود المشروع يتبع ملف LICENSE؛ CEF وChromium مرخصان BSD؛
             EasyList وEasyPrivacy (GPLv3) وPhishing Army (CC0) تُستخدم

@@ -143,6 +143,22 @@ bool Database::Migrate(std::string* error) {
       "  decision INTEGER NOT NULL,"
       "  updated_at INTEGER NOT NULL,"
       "  PRIMARY KEY (host, type));",
+      // v2 -> v3: local password manager (DPAPI-encrypted secrets) +
+      // user-script extensions (Phase 10).
+      "CREATE TABLE IF NOT EXISTS passwords ("
+      "  id INTEGER PRIMARY KEY,"
+      "  origin TEXT NOT NULL,"
+      "  username TEXT NOT NULL,"
+      "  secret TEXT NOT NULL,"  // DPAPI blob, base64 — never plaintext
+      "  updated_at INTEGER NOT NULL);"
+      "CREATE INDEX IF NOT EXISTS idx_passwords_origin ON passwords (origin);"
+      "CREATE TABLE IF NOT EXISTS user_scripts ("
+      "  id INTEGER PRIMARY KEY,"
+      "  name TEXT NOT NULL,"
+      "  matches TEXT NOT NULL,"
+      "  code TEXT NOT NULL,"
+      "  enabled INTEGER NOT NULL DEFAULT 1,"
+      "  created_at INTEGER NOT NULL);",
   };
   constexpr int kSteps = sizeof(kMigrations) / sizeof(kMigrations[0]);
 

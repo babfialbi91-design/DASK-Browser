@@ -330,6 +330,19 @@ function App() {
           </button>
         )}
 
+        {state?.update?.available && state.update.url && (
+          <button
+            className="update-pill"
+            title="إصدار جديد من DASK متاح — انقر للتنزيل"
+            onClick={() => go({ type: 'createTab', url: state.update!.url! })}
+          >
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+              <path d="M12 3v13m0 0l-5-5m5 5l5-5M4 21h16" />
+            </svg>
+            تحديث {state.update.version}
+          </button>
+        )}
+
         <div className={`address-box${addressFocused ? ' focused' : ''}`}>
           <svg className="address-icon" viewBox="0 0 24 24" aria-hidden="true">
             {active?.internal ? icons.search : icons.globe}
@@ -381,6 +394,23 @@ function App() {
       {/* Phase 7: find-in-page bar (only for web pages). */}
       {state?.findActive && active && !active.internal && (
         <FindBar state={state} />
+      )}
+
+      {state?.passwordPrompt && (
+        <div className="pw-bubble" role="dialog" aria-label="حفظ كلمة المرور">
+          <div className="pw-text">
+            حفظ كلمة المرور لـ <strong>{state.passwordPrompt.host}</strong>؟
+          </div>
+          <div className="pw-user">{state.passwordPrompt.username || 'بدون اسم مستخدم'}</div>
+          <div className="perm-actions">
+            <button className="perm-btn allow" onClick={() => go({ type: 'pwResolve', id: state.passwordPrompt!.id, save: true })}>
+              حفظ
+            </button>
+            <button className="perm-btn deny" onClick={() => go({ type: 'pwResolve', id: state.passwordPrompt!.id, save: false })}>
+              عدم الحفظ
+            </button>
+          </div>
+        </div>
       )}
 
       {state?.permissionPrompt ? (

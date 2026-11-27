@@ -78,14 +78,18 @@ add_executable(dask_browser WIN32
     app/native/profiles.h
     app/native/profiles.cpp
     app/native/dask_scheme.h
-    app/native/dask_scheme.cpp)
+    app/native/dask_scheme.cpp
+    app/native/updater.h
+    app/native/updater.cpp
+    app/native/httpdownload.h
+    app/native/httpdownload.cpp)
 target_include_directories(dask_browser PRIVATE ${CEF_ROOT} app/native)
 target_link_libraries(dask_browser PRIVATE
     dask_cef_app
     dask_storage
     libcef_lib
     libcef_dll_wrapper
-    d3d11 dxgi dxguid ws2_32)
+    d3d11 dxgi dxguid ws2_32 crypt32 winhttp)
 dask_finalize_target(dask_browser)
 
 # CEF subprocess executable (renderer / gpu / utility processes).

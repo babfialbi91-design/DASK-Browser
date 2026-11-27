@@ -22,8 +22,21 @@
 #include "adblock/site_util.h"
 #include "dask_scheme.h"
 #include "storage/download_filename.h"
+#include "updater.h"
+
+#include <wincrypt.h>
+
+#pragma comment(lib, "crypt32.lib")
 
 namespace dask {
+
+// Phase 10 forward decls (defined later in namespace dask; used by
+// DaskQueryHandler + TabClient before their definitions).
+std::string HostOf(const std::wstring& wurl);
+bool DpapiUnprotect(const std::string& b64, std::string* plain);
+std::string DpapiProtect(const std::string& plain);
+std::string FillerScript(const std::string& host);
+bool ScriptMatches(const std::string& patterns, const std::string& host);
 
 namespace {
 
@@ -188,6 +201,9 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
                bool persistent,
                CefRefPtr<CefMessageRouterBrowserSide::Callback> callback) override {
     // Authorization: browser == UI browser, or a trusted internal page.
+    // Phase 10: WEB content gets exactly three narrow filler-channel calls
+    // (pwQuery/pwSubmit — password manager — and usCode for user scripts),
+    // each verified against the frame's own host.
     if (!mgr_->ui_browser_ || !browser->IsSame(mgr_->ui_browser_)) {
       if (mgr_->menu_browser_ && browser->IsSame(mgr_->menu_browser_)) {
         // trusted: the menu popup browser (Phase 7)
@@ -197,7 +213,88 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
       const bool trusted = tab && tab->internal &&
                            frame_url.rfind(kDaskUiOrigin, 0) == 0;
       if (!trusted) {
-        callback->Failure(403, "bridge access denied for this page");
+        // Peek at the request type before rejecting: allow the narrow
+        // filler channel for real web pages.
+        CefRefPtr<CefValue> peek =
+            CefParseJSON(request, cef_json_parser_options_t(0));
+        const std::string t =
+            peek && peek->GetType() == VTYPE_DICTIONARY
+                ? peek->GetDictionary()->GetString("type").ToString()
+                : std::string();
+        if (t != "pwQuery" && t != "pwSubmit" && t != "usCode") {
+          callback->Failure(403, "bridge access denied for this page");
+          return true;
+        }
+        if (!peek || peek->GetType() != VTYPE_DICTIONARY) {
+          callback->Failure(400, "bad request");
+          return true;
+        }
+        CefRefPtr<CefDictionaryValue> d = peek->GetDictionary();
+        const std::string frame_host = HostOf(frame_url);
+        if (frame_host.empty()) {
+          callback->Failure(403, "no host");
+          return true;
+        }
+        if (t == "pwQuery") {
+          // Only answer when a saved credential exists for THIS host.
+          const std::string host = d->GetString("host").ToString();
+          if (host != frame_host) {
+            callback->Failure(403, "host mismatch");
+            return true;
+          }
+          TabManager* mgr = mgr_;
+          mgr_->PostToDb([mgr, callback, host]() {
+            if (!mgr->passwords_store_) {
+              callback->Success("{}");
+              return;
+            }
+            std::vector<storage::PasswordRow> rows;
+            std::string err;
+            if (!mgr->passwords_store_->FindByOrigin(host, &rows, &err) ||
+                rows.empty()) {
+              callback->Success("{}");
+              return;
+            }
+            std::string pass;
+            if (!DpapiUnprotect(rows[0].secret, &pass)) {
+              callback->Success("{}");
+              return;
+            }
+            CefRefPtr<CefDictionaryValue> root = CefDictionaryValue::Create();
+            root->SetString("user", rows[0].username);
+            root->SetString("pass", pass);
+            CefRefPtr<CefValue> value = CefValue::Create();
+            value->SetDictionary(root);
+            callback->Success(
+                CefWriteJSON(value, cef_json_writer_options_t(0)).ToString());
+          });
+          return true;
+        }
+        if (t == "pwSubmit") {
+          const std::string host = d->GetString("host").ToString();
+          const std::string user =
+              d->GetString("username").ToString().substr(0, 128);
+          const std::string pass =
+              d->GetString("password").ToString().substr(0, 512);
+          if (host != frame_host || pass.empty()) {
+            callback->Failure(403, "host mismatch");
+            return true;
+          }
+          mgr_->PromptSavePassword(host, user, pass);
+          mgr_->pw_hosts_.insert(host);
+          callback->Success("{}");
+          return true;
+        }
+        // t == "usCode": return enabled userscripts for this host.
+        CefRefPtr<CefDictionaryValue> root = CefDictionaryValue::Create();
+        CefRefPtr<CefListValue> list = CefListValue::Create();
+        const auto codes = mgr_->ScriptsForHost(frame_host);
+        for (size_t i = 0; i < codes.size(); ++i) list->SetString(i, codes[i]);
+        root->SetList("scripts", list);
+        CefRefPtr<CefValue> value = CefValue::Create();
+        value->SetDictionary(root);
+        callback->Success(
+            CefWriteJSON(value, cef_json_writer_options_t(0)).ToString());
         return true;
       }
       }
@@ -231,7 +328,9 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
         "copyPageLink", "exitApp", "setLightTheme", "toggleAppMenu",
         "closeAppMenu", "setDnsResolver", "setListEnabled", "viewSource",
         "resizeMenuPopup", "editCommand", "createShortcut", "installPageApp",
-        "dragWindow", "windowControl", "getSetting", "setSetting"};
+        "dragWindow", "windowControl", "getSetting", "setSetting",
+        "pwList", "pwDelete", "pwClearAll", "pwResolve", "checkUpdate",
+        "usList", "usAdd", "usRemove", "usToggle"};
     if (!kAllowedRequests.count(type)) {
       callback->Failure(403, "unknown bridge request type");
       return true;
@@ -496,11 +595,175 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
         }
         mgr_->SetPrefString(key, value);
         if (key == "accent") {
-          if (mgr_->accent_ != value) { mgr_->accent_ = value; mgr_->PushUiEvent(); }
+          if (mgr_->accent_ != value) {
+            mgr_->accent_ = value;
+            mgr_->PushUiEvent();
+          }
         } else if (key == "onboarded") {
           mgr_->onboarded_ = value;
         }
       }
+    } else if (type == "checkUpdate") {
+      mgr_->CheckAppUpdate(true);
+      callback->Success("{}");
+    } else if (type == "pwResolve") {
+      const int64_t id = dict->GetInt("id");
+      const bool save = dict->GetBool("save");
+      mgr_->ResolvePasswordPrompt(id, save);
+      callback->Success("{}");
+    } else if (type == "pwList") {
+      TabManager* mgr = mgr_;
+      mgr_->PostToDb([mgr, callback]() {
+        if (!mgr->passwords_store_) {
+          callback->Failure(503, "database unavailable");
+          return;
+        }
+        std::vector<storage::PasswordRow> rows;
+        std::string err;
+        if (!mgr->passwords_store_->List(&rows, &err)) {
+          callback->Failure(500, err);
+          return;
+        }
+        CefRefPtr<CefDictionaryValue> root = CefDictionaryValue::Create();
+        CefRefPtr<CefListValue> items = CefListValue::Create();
+        for (size_t i = 0; i < rows.size(); ++i) {
+          CefRefPtr<CefDictionaryValue> item = CefDictionaryValue::Create();
+          item->SetInt("id", static_cast<int>(rows[i].id));
+          item->SetString("origin", rows[i].origin);
+          item->SetString("username", rows[i].username);
+          item->SetInt("updatedAt", static_cast<int>(rows[i].updated_at));
+          items->SetDictionary(i, item);
+        }
+        root->SetList("items", items);
+        CefRefPtr<CefValue> value = CefValue::Create();
+        value->SetDictionary(root);
+        callback->Success(
+            CefWriteJSON(value, cef_json_writer_options_t(0)).ToString());
+      });
+      return true;
+    } else if (type == "pwDelete") {
+      const int64_t id = dict->GetInt("id");
+      TabManager* mgr = mgr_;
+      mgr_->PostToDb([mgr, id]() {
+        if (mgr->passwords_store_) {
+          std::string err;
+          mgr->passwords_store_->Remove(id, &err);
+        }
+      });
+      callback->Success("{}");
+    } else if (type == "pwClearAll") {
+      TabManager* mgr = mgr_;
+      mgr_->PostToDb([mgr]() {
+        if (mgr->passwords_store_) {
+          std::string err;
+          mgr->passwords_store_->ClearAll(&err);
+        }
+      });
+      callback->Success("{}");
+    } else if (type == "usList") {
+      TabManager* mgr = mgr_;
+      mgr_->PostToDb([mgr, callback]() {
+        if (!mgr->user_scripts_store_) {
+          callback->Failure(503, "database unavailable");
+          return;
+        }
+        std::vector<storage::UserScriptRow> rows;
+        std::string err;
+        if (!mgr->user_scripts_store_->List(&rows, &err)) {
+          callback->Failure(500, err);
+          return;
+        }
+        CefRefPtr<CefDictionaryValue> root = CefDictionaryValue::Create();
+        CefRefPtr<CefListValue> items = CefListValue::Create();
+        for (size_t i = 0; i < rows.size(); ++i) {
+          CefRefPtr<CefDictionaryValue> item = CefDictionaryValue::Create();
+          item->SetInt("id", static_cast<int>(rows[i].id));
+          item->SetString("name", rows[i].name);
+          item->SetString("matches", rows[i].matches);
+          item->SetString("code", rows[i].code);
+          item->SetBool("enabled", rows[i].enabled);
+          items->SetDictionary(i, item);
+        }
+        root->SetList("items", items);
+        CefRefPtr<CefValue> value = CefValue::Create();
+        value->SetDictionary(root);
+        callback->Success(
+            CefWriteJSON(value, cef_json_writer_options_t(0)).ToString());
+      });
+      return true;
+    } else if (type == "usAdd") {
+      std::string name = dict->GetString("name").ToString();
+      std::string matches = dict->GetString("matches").ToString();
+      std::string code = dict->GetString("code").ToString();
+      if (name.empty() || name.size() > 64 || matches.empty() ||
+          matches.size() > 256 || code.empty() || code.size() > (256 << 10)) {
+        callback->Failure(400, "bad script fields");
+        return true;
+      }
+      TabManager* mgr = mgr_;
+      mgr_->PostToDb([mgr, name, matches, code]() {
+        if (mgr->user_scripts_store_) {
+          std::string err;
+          int64_t id = 0;
+          mgr->user_scripts_store_->Add(name, matches, code, &id, &err);
+          // refresh the CEF UI copy of the scripts list
+          std::vector<storage::UserScriptRow> rows;
+          if (mgr->user_scripts_store_->List(&rows, &err)) {
+            PostToCef([mgr, rows]() {
+              std::lock_guard<std::mutex> lock(mgr->state_mutex_);
+              mgr->scripts_cache_.clear();
+              for (const auto& r : rows) {
+                mgr->scripts_cache_.push_back({r.id, r.name, r.matches,
+                                               r.code, r.enabled});
+              }
+            });
+          }
+        }
+      });
+      callback->Success("{}");
+    } else if (type == "usRemove") {
+      const int64_t id = dict->GetInt("id");
+      TabManager* mgr = mgr_;
+      mgr_->PostToDb([mgr, id]() {
+        if (mgr->user_scripts_store_) {
+          std::string err;
+          mgr->user_scripts_store_->Remove(id, &err);
+          std::vector<storage::UserScriptRow> rows;
+          if (mgr->user_scripts_store_->List(&rows, &err)) {
+            PostToCef([mgr, rows]() {
+              std::lock_guard<std::mutex> lock(mgr->state_mutex_);
+              mgr->scripts_cache_.clear();
+              for (const auto& r : rows) {
+                mgr->scripts_cache_.push_back({r.id, r.name, r.matches,
+                                               r.code, r.enabled});
+              }
+            });
+          }
+        }
+      });
+      callback->Success("{}");
+    } else if (type == "usToggle") {
+      const int64_t id = dict->GetInt("id");
+      const bool enabled = dict->GetBool("enabled");
+      TabManager* mgr = mgr_;
+      mgr_->PostToDb([mgr, id, enabled]() {
+        if (mgr->user_scripts_store_) {
+          std::string err;
+          mgr->user_scripts_store_->SetEnabled(id, enabled, &err);
+          std::vector<storage::UserScriptRow> rows;
+          if (mgr->user_scripts_store_->List(&rows, &err)) {
+            PostToCef([mgr, rows]() {
+              std::lock_guard<std::mutex> lock(mgr->state_mutex_);
+              mgr->scripts_cache_.clear();
+              for (const auto& r : rows) {
+                mgr->scripts_cache_.push_back({r.id, r.name, r.matches,
+                                               r.code, r.enabled});
+              }
+            });
+          }
+        }
+      });
+      callback->Success("{}");
     } else if (type == "resizeMenuPopup") {
       mgr_->ResizeMenuPopup(dict->GetBool("wide"), dict->GetInt("top"),
                             dict->GetInt("height"));
@@ -832,6 +1095,35 @@ class TabClient : public CefClient,
     mgr_->OnLoadingChanged(tab_id_, isLoading);
   }
 
+  // CefLoadHandler — Phase 10: inject user-script extensions and the
+  // password auto-fill bootstrap into real web pages at load end.
+  void OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+                 int httpStatusCode) override {
+    (void)httpStatusCode;
+    if (!frame || frame->IsMain() == false) return;  // top frames only
+    const std::wstring wurl = frame->GetURL().ToWString();
+    if (wurl.rfind(L"http://dask.ui", 0) == 0 ||
+        wurl.rfind(L"http://dask.ui/", 0) == 0) {
+      return;  // never inject into internal pages
+    }
+    if (!(wurl.rfind(L"http://", 0) == 0 || wurl.rfind(L"https://", 0) == 0))
+      return;
+    // Host for the password channel.
+    std::string host = HostOf(wurl);
+    if (host.empty()) return;
+    // 1) userscripts
+    for (const std::string& code : mgr_->ScriptsForHost(host)) {
+      frame->ExecuteJavaScript(code, frame->GetURL(), 0);
+    }
+    // 2) password filler bootstrap (only when the host already has a saved
+    //    password — a tiny script that fills + listens for submit).
+    if (mgr_->HasSavedPassword(host)) {
+      frame->ExecuteJavaScript(
+          CefString(FillerScript(host)), frame->GetURL(), 0);
+    }
+  }
+
+
   // CefContextMenuHandler (Phase 8): Brave-style Arabic context menu.
   void OnBeforeContextMenu(CefRefPtr<CefBrowser> browser,
                            CefRefPtr<CefFrame> frame,
@@ -1023,6 +1315,30 @@ void TabManager::Start() {
 
   // Phase 4: open the local database (thread + stores).
   StartDatabase();
+
+  // Phase 9.6: automatic update check — one anonymous HTTPS GET per day,
+  // delayed so it never affects startup.
+  PostToCef([this]() {
+    CefPostDelayedTask(TID_UI, new FnTask(
+        []() { dask::CheckForUpdate(false); }), 15000);
+  });
+
+  // Phase 10: load the userscript cache (CEF UI copy) right after startup.
+  PostToDb([this]() {
+    if (!user_scripts_store_) return;
+    std::vector<storage::UserScriptRow> rows;
+    std::string err;
+    if (user_scripts_store_->List(&rows, &err)) {
+      PostToCef([this, rows]() {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        scripts_cache_.clear();
+        for (const auto& r : rows) {
+          scripts_cache_.push_back(
+              {r.id, r.name, r.matches, r.code, r.enabled});
+        }
+      });
+    }
+  });
 
   // The UI browser (React toolbar) on top of the window. Tab id 0.
   // Skipped in --app mode: the app window is pure content.
@@ -1559,6 +1875,22 @@ std::string TabManager::BuildStateJson(bool focus_address) {
     if (!db_note_.empty()) root_dict->SetString("dbNote", db_note_);
   }
 
+  // Phase 9.6: app update availability.
+  auto upd = CefDictionaryValue::Create();
+  upd->SetBool("available", update_available_);
+  upd->SetString("version", update_version_);
+  upd->SetString("url", update_url_);
+  root_dict->SetDictionary("update", upd);
+
+  // Phase 10: pending password save prompt (lives only in memory).
+  if (!pw_prompt_.host.empty() && pw_prompt_.id) {
+    auto pwp = CefDictionaryValue::Create();
+    pwp->SetInt("id", static_cast<int>(pw_prompt_.id));
+    pwp->SetString("host", pw_prompt_.host);
+    pwp->SetString("username", pw_prompt_.user);
+    root_dict->SetDictionary("passwordPrompt", pwp);
+  }
+
   root_dict->SetBool("fullscreen", fullscreen_);
   root_dict->SetInt("zoomPercent", static_cast<int>(std::llround(std::exp(zoom_level_ * 0.1823215568) * 100.0)));
   root_dict->SetBool("lightTheme", light_theme_);
@@ -1798,6 +2130,114 @@ void TabManager::UpdateFilterLists() {
 
 // ---- Storage (Phase 4) ------------------------------------------------------
 
+
+// ---- Phase 10 implementation ----------------------------------------------
+
+bool TabManager::FillCredential(const std::string& host, std::string* user,
+                                std::string* pass) {
+  PostToDb([this, host, user, pass]() {
+    if (!passwords_store_) return;
+    std::vector<storage::PasswordRow> rows;
+    std::string err;
+    if (!passwords_store_->FindByOrigin(host, &rows, &err)) return;
+    for (const auto& row : rows) {
+      std::string secret;
+      if (!DpapiUnprotect(row.secret, &secret)) continue;
+      *user = row.username;
+      *pass = secret;
+      return;  // newest first
+    }
+  });
+  return true;
+}
+
+void TabManager::PromptSavePassword(const std::string& host,
+                                    const std::string& user,
+                                    const std::string& pass) {
+  PostToCef([this, host, user, pass]() {
+    pw_prompt_.id = pw_prompt_next_++;
+    pw_prompt_.host = host;
+    pw_prompt_.user = user;
+    pw_prompt_.pass = pass;
+    PushUiEvent();
+  });
+}
+
+void TabManager::ResolvePasswordPrompt(int64_t prompt_id, bool save) {
+  if (pw_prompt_.id != prompt_id) return;
+  if (save && !pw_prompt_.host.empty() && !pw_prompt_.pass.empty()) {
+    const std::string secret = DpapiProtect(pw_prompt_.pass);
+    if (!secret.empty()) {
+      PostToDb([this, host = pw_prompt_.host, user = pw_prompt_.user,
+                secret]() {
+        if (!passwords_store_) return;
+        std::string err;
+        passwords_store_->Add(host, user, secret, nullptr, &err);
+      });
+    }
+  }
+  pw_prompt_ = {};
+  PushUiEvent();
+}
+
+
+void TabManager::CheckAppUpdate(bool manual) {
+  dask::CheckForUpdate(manual);
+}
+
+void TabManager::UpdateAvailable(std::string tag, std::string url,
+                                 bool available, bool failed) {
+  // CEF UI thread (posted from the updater thread).
+  update_available_ = available;
+  update_version_ = tag;
+  update_url_ = url;
+  (void)failed;
+  if (available) PushUiEvent();
+}
+
+
+bool TabManager::HasSavedPassword(const std::string& host) {
+  // CEF UI thread. pw_hosts_ is a fast "definitely has credential" cache
+  // (updated whenever we see a pwSubmit or load the DB list). OnLoadEnd
+  // uses it to skip the injection on hosts that have never had a password.
+  // We also kick off an async DB probe that reinjects the filler when it
+  // confirms a match (covers the cold-start case).
+  if (pw_hosts_.count(host)) return true;
+  PostToDb([this, host]() {
+    bool found = false;
+    if (passwords_store_) {
+      std::vector<storage::PasswordRow> rows;
+      std::string err;
+      if (passwords_store_->FindByOrigin(host, &rows, &err) && !rows.empty())
+        found = true;
+    }
+    if (!found) return;
+    PostToCef([this, host]() {
+      pw_hosts_.insert(host);
+      for (Tab& tab : tabs_) {
+        if (tab.browser && !tab.internal) {
+          CefRefPtr<CefFrame> frame = tab.browser->GetMainFrame();
+          const std::wstring wurl = frame->GetURL().ToWString();
+          if (HostOf(wurl) == host)
+            frame->ExecuteJavaScript(CefString(FillerScript(host)),
+                                     frame->GetURL(), 0);
+        }
+      }
+    });
+  });
+  return false;
+}
+
+std::vector<std::string> TabManager::ScriptsForHost(const std::string& host) {
+  // CEF UI thread (also called from OnQuery).
+  std::vector<std::string> codes;
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  for (const ScriptUi& s : scripts_cache_) {
+    if (s.enabled && ScriptMatches(s.matches, host)) codes.push_back(s.code);
+  }
+  return codes;
+}
+
 void TabManager::StartDatabase() {
   // CEF UI thread. The DB thread owns the SQLite connection.
   const std::string db_path = Utf8FromWide(profile_store_->db_path());
@@ -1827,6 +2267,8 @@ void TabManager::StartDatabase() {
       downloads_store_ = std::make_unique<storage::Downloads>(db_.get());
       settings_store_ = std::make_unique<storage::Settings>(db_.get());
       permissions_store_ = std::make_unique<storage::Permissions>(db_.get());
+      passwords_store_ = std::make_unique<storage::Passwords>(db_.get());
+      user_scripts_store_ = std::make_unique<storage::UserScripts>(db_.get());
 
       std::string db_err;
       settings_store_->GetBool("restoreSession", false, &restore_session_,
@@ -2086,7 +2528,84 @@ std::string WstrToUtf8(const std::wstring& w) {
                              n, nullptr, nullptr);
   return out;
 }
+
 }  // namespace
+
+// Extracts the host from a URL (lowercase, no port).
+std::string HostOf(const std::wstring& wurl) {
+  CefURLParts parts;
+  if (!CefParseURL(CefString(wurl), parts)) return {};
+  const std::string host = CefString(&parts.host).ToString();
+  const size_t colon = host.find(':');
+  std::string clean = colon == std::string::npos ? host : host.substr(0, colon);
+  std::transform(clean.begin(), clean.end(), clean.begin(),
+                 [](unsigned char c) { return (char)tolower(c); });
+  return clean;
+}
+
+// The password filler bootstrap. Runs in the PAGE context and talks to the
+// browser through the restricted pwQuery/pwSubmit channel. The native side
+// only answers pwQuery for the frame's own host, only when a saved
+// credential exists, and only once per frame load.
+std::string FillerScript(const std::string& host) {
+  std::string js = R"js((function(){
+  var HOST = )js";
+  js += CefString(""" + host + """);
+  js += R"js(;
+  function q(type, data, cb){
+    if(!window.cefQuery) return;
+    window.cefQuery({
+      request: JSON.stringify(Object.assign({type:type, host:HOST}, data||{})),
+      persistent:false,
+      onSuccess:function(r){ try{ cb(JSON.parse(r)); }catch(e){} },
+      onFailure:function(){}
+    });
+  }
+  function pwField(){
+    var pw = document.querySelectorAll('input[type=password]');
+    for (var i=0;i<pw.length;i++){
+      var el = pw[i];
+      var r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) return el;
+    }
+    return pw[0] || null;
+  }
+  function userFieldFor(pw){
+    var form = pw.closest('form') || document;
+    var inputs = form.querySelectorAll('input:not([type=password]):not([type=hidden])');
+    var best = null;
+    for (var i=0;i<inputs.length;i++){
+      var t = (inputs[i].type||'text').toLowerCase();
+      if (t==='text'||t==='email'||t==='tel'){ best = inputs[i]; break; }
+    }
+    return best;
+  }
+  function fill(user, pass){
+    var el = pwField(); if(!el) return;
+    var uf = userFieldFor(el);
+    if (uf && user){ uf.value = user; uf.dispatchEvent(new Event('input',{bubbles:true})); }
+    el.value = pass; el.dispatchEvent(new Event('input',{bubbles:true}));
+  }
+  function hookSubmit(){
+    var el = pwField(); if(!el) return;
+    var form = el.closest('form');
+    var target = form || document;
+    var handler = function(){
+      var e = pwField(); if(!e) return;
+      if (!e.value) return;
+      var uf = userFieldFor(e);
+      q('pwSubmit', {username: uf ? uf.value : '', password: e.value});
+    };
+    target.addEventListener('submit', handler, {once:true});
+  }
+  q('pwQuery', null, function(r){
+    if (r && r.user){ fill(r.user, r.pass); }
+    hookSubmit();
+  });
+})();)js";
+  return js;
+}
+
 
 void TabManager::OpenFindBar() {
   // Called from the Win32 keyboard-hook thread: set the flag on the CEF
@@ -2576,6 +3095,98 @@ bool TabManager::HandleContextMenuCommand(
 void TabManager::ExitApp() {
   // Same safe path as the window close button.
   ::PostMessageW(main_hwnd_, WM_CLOSE, 0, 0);
+}
+
+
+// ---- Phase 10: DPAPI helpers (local-only password encryption) -------------
+
+// Encrypts plaintext with the current Windows user's DPAPI key. The blob is
+// only decryptable under the same Windows account on this machine.
+std::string DpapiProtect(const std::string& plain) {
+  DATA_BLOB in{}, out{};
+  in.cbData = static_cast<DWORD>(plain.size());
+  in.pbData = reinterpret_cast<BYTE*>(const_cast<char*>(plain.data()));
+  if (!::CryptProtectData(&in, L"DASK.PW.v1", nullptr, nullptr, nullptr,
+                          CRYPTPROTECT_UI_FORBIDDEN, &out)) {
+    return {};
+  }
+  std::string blob(reinterpret_cast<const char*>(out.pbData), out.cbData);
+  ::LocalFree(out.pbData);
+  // base64
+  static const char* kAl = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  std::string b64;
+  b64.reserve((blob.size() + 2) / 3 * 4);
+  for (size_t i = 0; i < blob.size(); i += 3) {
+    const unsigned n = (static_cast<unsigned char>(blob[i]) << 16) |
+        (i + 1 < blob.size() ? static_cast<unsigned char>(blob[i + 1]) << 8 : 0) |
+        (i + 2 < blob.size() ? static_cast<unsigned char>(blob[i + 2]) : 0);
+    b64 += kAl[(n >> 18) & 63]; b64 += kAl[(n >> 12) & 63];
+    b64 += i + 1 < blob.size() ? kAl[(n >> 6) & 63] : '=';
+    b64 += i + 2 < blob.size() ? kAl[n & 63] : '=';
+  }
+  return b64;
+}
+
+bool DpapiUnprotect(const std::string& b64, std::string* plain) {
+  // base64 -> bytes
+  auto val = [](char c) -> int {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+  };
+  std::string blob;
+  blob.reserve(b64.size() / 4 * 3);
+  int acc = 0, bits = 0;
+  for (char c : b64) {
+    const int v = val(c);
+    if (v < 0) continue;  // skip '=' and whitespace
+    acc = (acc << 6) | v;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      blob.push_back(static_cast<char>((acc >> bits) & 0xFF));
+    }
+  }
+  DATA_BLOB in{}, out{};
+  in.cbData = static_cast<DWORD>(blob.size());
+  in.pbData = reinterpret_cast<BYTE*>(blob.data());
+  if (!::CryptUnprotectData(&in, nullptr, nullptr, nullptr, nullptr,
+                            CRYPTPROTECT_UI_FORBIDDEN, &out)) {
+    return false;
+  }
+  plain->assign(reinterpret_cast<const char*>(out.pbData), out.cbData);
+  ::LocalFree(out.pbData);
+  return true;
+}
+
+// Does a userscript match pattern cover this host? Patterns: "host",
+// "*.host", "suffix.*" (subdomain tail) — kept deliberately simple.
+bool ScriptMatches(const std::string& patterns, const std::string& host) {
+  size_t start = 0;
+  while (start <= patterns.size()) {
+    size_t comma = patterns.find(',', start);
+    std::string pat = patterns.substr(start,
+        (comma == std::string::npos ? patterns.size() : comma) - start);
+    start = comma == std::string::npos ? patterns.size() + 1 : comma + 1;
+    // trim
+    const auto issp = [](char c) { return c == ' ' || c == '	'; };
+    while (!pat.empty() && issp(pat.front())) pat.erase(pat.begin());
+    while (!pat.empty() && issp(pat.back())) pat.pop_back();
+    if (pat.empty()) continue;
+    if (pat == "*" || pat == host) return true;
+    if (pat.size() > 2 && pat[0] == '*' && pat[1] == '.') {
+      // "*.example.com" matches example.com + subdomains
+      const std::string tail = pat.substr(1);
+      if (host.size() >= tail.size() &&
+          host.compare(host.size() - tail.size(), tail.size(), tail) == 0) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 std::string TabManager::ReadPrefString(const std::string& key) {

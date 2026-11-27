@@ -5,6 +5,27 @@
 // link shown to the user.
 #include "updater.h"
 
+#include <functional>
+#include "include/cef_task.h"
+
+namespace {
+
+class UiFnTask : public CefTask {
+ public:
+  explicit UiFnTask(std::function<void()> fn) : fn_(std::move(fn)) {}
+  void Execute() override { auto run = std::move(fn_); run(); }
+
+ private:
+  IMPLEMENT_REFCOUNTING(UiFnTask);
+  std::function<void()> fn_;
+};
+
+void PostUi(std::function<void()> fn) {
+  CefPostTask(TID_UI, CefRefPtr<UiFnTask>(new UiFnTask(std::move(fn))));
+}
+
+}  // namespace
+
 #include <windows.h>
 #include <httpdownload.h>
 
@@ -21,7 +42,7 @@ namespace dask {
 namespace {
 
 // DASK Browser version (kept in sync with the installer / CMake).
-constexpr char kAppVersion[] = "1.1.0";
+constexpr char kAppVersion[] = "1.2.0";
 
 std::wstring Utf8ToWide(const std::string& s) {
   if (s.empty()) return {};
@@ -62,9 +83,7 @@ void CheckForUpdate(bool manual) {
     std::string body;
     if (!DownloadToString(url, &body, /*timeout_ms=*/15000)) {
       if (manual) {
-        CefPostTask(TID_UI, base::BindOnce([]() {
-          TabManager::Get()->UpdateAvailable("", "", false, true);
-        }));
+        PostUi([]() { TabManager::Get()->UpdateAvailable("", "", false, true); });
       }
       return;
     }
@@ -105,14 +124,11 @@ void CheckForUpdate(bool manual) {
       }
     }
     const bool newer = VersionNewer(tag, kAppVersion);
-    CefPostTask(TID_UI, base::BindOnce(
-        [](std::string tag, std::string page, std::string installer,
-           bool newer) {
-          TabManager::Get()->UpdateAvailable(tag, !installer.empty()
-                                                 ? installer : page,
-                                             newer, false);
-        },
-        tag, html, installer_url, newer));
+    PostUi([tag, page = html, installer = installer_url, newer]() {
+      TabManager::Get()->UpdateAvailable(tag, !installer.empty() ? installer
+                                                                 : page,
+                                         newer, false);
+    });
   }).detach();
 }
 

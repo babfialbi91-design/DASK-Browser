@@ -21,6 +21,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -273,6 +274,47 @@ class TabManager {
   void CheckAppUpdate(bool manual);
   void UpdateAvailable(std::string tag, std::string url, bool available,
                        bool failed);
+
+  // ---- Phase 10: local password manager + user-script extensions ---------
+
+  struct SavedPw {
+    int64_t id = 0;
+    std::string origin;
+    std::string username;
+  };
+
+  // Content-script channel (called from OnQuery after origin checks):
+  // whether the host has a saved credential (async re-injects the filler).
+  bool HasSavedPassword(const std::string& host);
+  // Returns saved credentials for this exact host, decrypted.
+  bool FillCredential(const std::string& host, std::string* user,
+                      std::string* pass);
+  // Queues a save/update prompt for the toolbar bubble.
+  void PromptSavePassword(const std::string& host, const std::string& user,
+                          const std::string& pass);
+  // Toolbar resolves the prompt.
+  void ResolvePasswordPrompt(int64_t prompt_id, bool save);
+  // Settings management.
+  void ListPasswords(int64_t query_id);
+  void DeletePassword(int64_t row_id);
+  void ClearPasswords();
+
+  // Userscripts.
+  void ListUserScripts(int64_t query_id);
+  void AddUserScript(std::string name, std::string matches, std::string code);
+  void RemoveUserScript(int64_t id);
+  void ToggleUserScript(int64_t id, bool enabled);
+  // Returns enabled scripts matching the host (content-script channel).
+  std::vector<std::string> ScriptsForHost(const std::string& host);
+
+  // Cache of the scripts list on the CEF UI thread (guarded by state_mutex_).
+  struct ScriptUi {
+    int64_t id = 0;
+    std::string name;
+    std::string matches;
+    std::string code;
+    bool enabled = false;
+  };
   // Site the user is browsing (top-level host of the tab, CEF UI thread).
   std::wstring TabSiteHost(int64_t tab_id);
   // Current tab title (CEF UI thread; used when recording history).
@@ -367,6 +409,8 @@ class TabManager {
   std::unique_ptr<storage::Downloads> downloads_store_;
   std::unique_ptr<storage::Settings> settings_store_;
   std::unique_ptr<storage::Permissions> permissions_store_;
+  std::unique_ptr<storage::Passwords> passwords_store_;      // Phase 10
+  std::unique_ptr<storage::UserScripts> user_scripts_store_;  // Phase 10
 
   // Read models mirrored to the CEF UI thread (guarded by state_mutex_).
   std::mutex state_mutex_;
@@ -396,6 +440,23 @@ class TabManager {
   bool light_theme_ = false;  // Phase 7: UI theme (false = dark, default)
   std::string accent_ = "#8b5cf6";  // Phase 9.5: user accent color
   std::string onboarded_;  // Phase 9.5: first-run wizard done flag (memory copy)
+
+  // Phase 9.6: app update state (CEF UI thread copies).
+  bool update_available_ = false;
+  std::string update_version_;
+  std::string update_url_;
+
+  // Phase 10: password save prompt (CEF UI thread).
+  struct PwPrompt {
+    int64_t id = 0;
+    std::string host;
+    std::string user;
+    std::string pass;   // kept in memory only until the user decides
+  };
+  PwPrompt pw_prompt_;
+  int64_t pw_prompt_next_ = 1;
+  std::vector<ScriptUi> scripts_cache_;
+  std::set<std::string> pw_hosts_;  // hosts with a saved credential (CEF UI)
   std::string dns_resolver_;  // Phase 7.5: DoH provider (empty = system default)
 
   // Active downloads: CEF id -> callback used for cancel (CEF UI thread).

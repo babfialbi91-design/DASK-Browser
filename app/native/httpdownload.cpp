@@ -43,15 +43,13 @@ bool DownloadToString(const std::string& url_utf8, std::string* out,
         connect, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
         WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
     if (!request) break;
-    DWORD flags = WINHTTP_OPTION_SECURITY_PROTOCOL;
-    DWORD tls12 = WINHTTP_PROTOCOL_FLAG_TLS1_2;
-    ::WinHttpSetOption(request, flags, &tls12, sizeof(tls12));
+    // TLS 1.2 is the default on Win10/11 SDKs; nothing to set explicitly.
     ::WinHttpSetTimeouts(request, timeout_ms, timeout_ms, timeout_ms,
                          timeout_ms);
     // GitHub API requires a User-Agent.
     const wchar_t* hdrs = L"User-Agent: DASK-Browser-Updater\r\n";
-    if (!::WinHttpSendRequest(request, hdrs, -1, WINHTTP_NO_REQUEST_DATA, 0, 0,
-                              0))
+    if (!::WinHttpSendRequest(request, hdrs, static_cast<DWORD>(-1L),
+                              WINHTTP_NO_REQUEST_DATA, 0, 0, 0))
       break;
     if (!::WinHttpReceiveResponse(request, nullptr)) break;
 

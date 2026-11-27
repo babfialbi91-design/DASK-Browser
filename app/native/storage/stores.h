@@ -160,4 +160,61 @@ class Permissions {
   Database* db_;
 };
 
+// ---- Passwords (Phase 10: local-only password manager) ---------------------
+
+// The secret is stored as a DPAPI blob (base64). DPAPI encrypts with the
+// Windows user account key — decryption is only possible under the same
+// Windows account on the same machine. Nothing leaves the device.
+struct PasswordRow {
+  int64_t id = 0;
+  std::string origin;    // host, e.g. "accounts.example.com"
+  std::string username;
+  std::string secret;    // DPAPI blob, base64
+  int64_t updated_at = 0;
+};
+
+class Passwords {
+ public:
+  explicit Passwords(Database* db) : db_(db) {}
+
+  // Upserts (same origin+username replaces the secret). Returns row id.
+  bool Add(const std::string& origin, const std::string& username,
+           const std::string& secret_b64, int64_t* id, std::string* error);
+  bool FindByOrigin(const std::string& origin, std::vector<PasswordRow>* out,
+                    std::string* error);
+  bool List(std::vector<PasswordRow>* out, std::string* error);
+  bool Remove(int64_t id, std::string* error);
+  bool ClearAll(std::string* error);
+
+ private:
+  Database* db_;
+};
+
+// ---- User-script extensions (Phase 10) ------------------------------------
+
+// Minimal userscript engine (Tampermonkey-style): JS code with a match
+// pattern list, injected into matching pages at document load.
+struct UserScriptRow {
+  int64_t id = 0;
+  std::string name;
+  std::string matches;  // comma-separated patterns: host, *.host, /suffix
+  std::string code;
+  bool enabled = true;
+  int64_t created_at = 0;
+};
+
+class UserScripts {
+ public:
+  explicit UserScripts(Database* db) : db_(db) {}
+
+  bool Add(const std::string& name, const std::string& matches,
+           const std::string& code, int64_t* id, std::string* error);
+  bool List(std::vector<UserScriptRow>* out, std::string* error);
+  bool SetEnabled(int64_t id, bool enabled, std::string* error);
+  bool Remove(int64_t id, std::string* error);
+
+ private:
+  Database* db_;
+};
+
 }  // namespace dask::storage

@@ -105,6 +105,8 @@ export interface AppState {
   dbNote?: string
   lightTheme: boolean
   accent?: string
+  update?: { available: boolean; version?: string; url?: string }
+  passwordPrompt?: { id: number; host: string; username: string }
   dnsResolver: string
   fullscreen: boolean
   zoomPercent: number
@@ -185,6 +187,15 @@ export type Request =
   | { type: 'windowControl'; action: 'min' | 'max' | 'close' }
   | { type: 'getSetting'; key: 'accent' | 'onboarded' }
   | { type: 'setSetting'; key: 'accent' | 'onboarded'; value: string }
+  | { type: 'checkUpdate' }
+  | { type: 'pwResolve'; id: number; save: boolean }
+  | { type: 'pwList' }
+  | { type: 'pwDelete'; id: number }
+  | { type: 'pwClearAll' }
+  | { type: 'usList' }
+  | { type: 'usAdd'; name: string; matches: string; code: string }
+  | { type: 'usRemove'; id: number }
+  | { type: 'usToggle'; id: number; enabled: boolean }
 
 interface CefQueryRequest {
   request: string
@@ -276,6 +287,20 @@ function coerceState(value: unknown): AppState {
     dbNote: parsed.dbNote,
     lightTheme: parsed.lightTheme ?? false,
     accent: parsed.accent ?? undefined,
+    update: parsed.update
+      ? {
+          available: !!parsed.update.available,
+          version: parsed.update.version ?? undefined,
+          url: parsed.update.url ?? undefined,
+        }
+      : undefined,
+    passwordPrompt: parsed.passwordPrompt
+      ? {
+          id: parsed.passwordPrompt.id,
+          host: parsed.passwordPrompt.host,
+          username: parsed.passwordPrompt.username,
+        }
+      : undefined,
     dnsResolver: parsed.dnsResolver ?? '',
     fullscreen: parsed.fullscreen ?? false,
     zoomPercent: parsed.zoomPercent ?? 100,
