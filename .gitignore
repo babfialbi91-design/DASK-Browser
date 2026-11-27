@@ -21,3 +21,4 @@ scripts/cef_root.txt
 app/ui/node_modules/
 *.tsbuildinfo
 *.obj
+dist/
