@@ -32,6 +32,7 @@ typedef void (*sqlite3_destructor_type)(void*);
 int sqlite3_open_v2(const char* filename, sqlite3** ppDb, int flags,
                     const char* z_vfs);
 int sqlite3_close_v2(sqlite3*);
+int sqlite3_busy_timeout(sqlite3*, int ms);
 int sqlite3_exec(sqlite3*, const char* sql,
                  int (*callback)(void*, int, char**, char**), void*,
                  char** errmsg);

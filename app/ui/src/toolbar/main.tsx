@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import '../common/theme.css'
+import '../menu/menu.css'
 import { send, subscribe, type AppState, type TabState } from '../common/bridge'
+
+import { FindBar } from '../menu/FindBar'
 
 // Icons (inline SVG, 24x24 viewBox scaled by CSS).
 const icons = {
@@ -88,6 +91,15 @@ function ToolbarTab(props: { tab: TabState; active: boolean; onActivate: () => v
 }
 
 function App() {
+  // Phase 7: follow the app theme (dark default) on <html data-theme>.
+  useEffect(() => {
+    return subscribe((s2) => {
+      document.documentElement.setAttribute(
+        'data-theme',
+        s2.lightTheme ? 'light' : 'dark',
+      )
+    })
+  }, [])
   const [state, setState] = useState<AppState | null>(null)
   const [address, setAddress] = useState('')
   const [addressFocused, setAddressFocused] = useState(false)
@@ -248,7 +260,31 @@ function App() {
         </div>
 
         {loading && <div className="loading-bar" aria-hidden="true" />}
+
+        {/* Phase 7: hamburger menu button — opens the native popup menu
+            window (the dropdown cannot render inside this 84px toolbar
+            browser window: it would be clipped). */}
+        <div className="menu-root">
+          <button
+            className="nav-btn menu-btn"
+            title="القائمة"
+            aria-label="القائمة الرئيسية"
+            aria-haspopup="menu"
+            onClick={() => void send({ type: 'toggleAppMenu' }).catch(() => {})}
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="4" y1="7" x2="20" y2="7" />
+              <line x1="4" y1="12" x2="20" y2="12" />
+              <line x1="4" y1="17" x2="20" y2="17" />
+            </svg>
+          </button>
+        </div>
       </div>
+
+      {/* Phase 7: find-in-page bar (only for web pages). */}
+      {state?.findActive && active && !active.internal && (
+        <FindBar state={state} />
+      )}
 
       {state?.permissionPrompt ? (
         (() => {

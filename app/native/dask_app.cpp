@@ -2,18 +2,33 @@
 #include "dask_app.h"
 
 #include "dask_scheme.h"
+#include <string>
 #include "include/cef_app.h"
 #include "include/cef_command_line.h"
 #include "include/wrapper/cef_message_router.h"
 
 namespace dask {
+namespace {
+
+std::string g_doh_resolver;  // set before CefInitialize (browser process)
+
+}  // namespace
+
+void SetDoHResolver(const std::string& resolver) { g_doh_resolver = resolver; }
 
 void OnBeforeCommandLineProcessing(const CefString& process_type,
                                    CefRefPtr<CefCommandLine> command_line) {
-  // No custom switches. Do not disable the Chromium sandbox here (or anywhere)
-  // merely to make startup easier; sandboxing stays enabled.
+  // Phase 7.5: DNS-over-HTTPS provider chosen in Settings. Applied as
+  // Chromium network-service switches on the next launch (the network
+  // service cannot re-read them while running). Empty value = system DNS.
   (void)process_type;
-  (void)command_line;
+  if (g_doh_resolver.empty() ||
+      command_line->HasSwitch("dns-over-https-resolvers")) {
+    return;
+  }
+  command_line->AppendSwitchWithValue(
+      "dns-over-https-resolvers", g_doh_resolver);
+  command_line->AppendSwitchWithValue("enable-features", "DnsOverHttps");
 }
 
 namespace {

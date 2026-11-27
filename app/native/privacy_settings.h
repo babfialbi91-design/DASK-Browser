@@ -26,11 +26,18 @@ class PrivacySettings {
   void RemoveSiteException(const std::wstring& host);
   std::vector<std::pair<std::wstring, bool>> SiteExceptions() const;
 
+  // Phase 7.5: per-list enable/disable. Disabled lists stay on disk but are
+  // not parsed into the engine.
+  bool IsListEnabled(const std::wstring& name) const;
+  void SetListEnabled(const std::wstring& name, bool enabled);
+  std::vector<std::wstring> DisabledLists() const { return disabled_lists_; }
+
  private:
   bool blocking_enabled_ = true;
   bool third_party_cookies_ = true;
   // host -> user allows ads (bypasses blocking) on this site.
   std::vector<std::pair<std::wstring, bool>> site_exceptions_;
+  std::vector<std::wstring> disabled_lists_;
   std::wstring file_path_;
 };
 

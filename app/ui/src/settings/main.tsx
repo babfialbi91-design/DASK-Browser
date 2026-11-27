@@ -31,8 +31,24 @@ const ENGINES = [
 ]
 
 function App() {
+  // Phase 7: follow the app theme (dark default) on <html data-theme>.
+  useEffect(() => {
+    return subscribe((s2) => {
+      document.documentElement.setAttribute(
+        'data-theme',
+        s2.lightTheme ? 'light' : 'dark',
+      )
+    })
+  }, [])
   const [state, setState] = useState<AppState | null>(null)
-  const [section, setSection] = useState<Section>('general')
+  const [section, setSection] = useState<Section>(() => {
+    // Menu items link to specific sections: settings.html#history etc.
+    const h = window.location.hash.replace('#', '')
+    return (['general', 'privacy', 'profiles', 'permissions', 'bookmarks',
+             'history', 'downloads', 'about'] as Section[]).includes(h as Section)
+      ? (h as Section)
+      : 'general'
+  })
   const [clearNote, setClearNote] = useState('')
   const [historyQuery, setHistoryQuery] = useState('')
   const [historyRows, setHistoryRows] = useState<HistoryItemUi[]>([])
@@ -104,6 +120,17 @@ function App() {
               }
             />
             <span>استعادة التبويبات المفتوحة عند بدء التشغيل.</span>
+          </label>
+
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={state.lightTheme}
+              onChange={(e) =>
+                go({ type: 'setLightTheme', enabled: e.target.checked })
+              }
+            />
+            <span>سمة فاتحة للواجهة (الافتراضي داكن).</span>
           </label>
 
           <h3>محرك البحث الافتراضي</h3>
@@ -260,8 +287,18 @@ function App() {
           <h3>القوائم</h3>
           <ul className="lists">
             {p.lists.map((list) => (
-              <li key={list.name}>
-                <strong>{list.name}</strong> —{' '}
+              <li key={list.name} className={p.disabledLists?.includes(list.name) ? 'list-off' : ''}>
+                <label className="list-toggle">
+                  <input
+                    type="checkbox"
+                    checked={!p.disabledLists?.includes(list.name)}
+                    onChange={(e) =>
+                      go({ type: 'setListEnabled', name: list.name, enabled: e.target.checked })
+                    }
+                  />
+                  <strong>{list.name}</strong>
+                </label>
+                {' '}
                 {list.rules.toLocaleString('ar')} قاعدة؛{' '}
                 {list.updated ? `آخر تحديث: ${list.updated}` : 'لم يُحدَّث بعد'}؛
                 الحالة: {list.status}
@@ -276,6 +313,30 @@ function App() {
           >
             {p.updating ? 'جارٍ التحديث…' : 'تحديث القوائم الآن'}
           </button>
+
+          <h3>نظام أسماء المواقع (DNS)</h3>
+          <p className="privacy-note">
+            بروتوكول مشفّر (DNS عبر HTTPS) — يُطبّق عند إعادة تشغيل المتصفح.
+            الافتراضي: DNS النظام.
+          </p>
+          <div className="dns-picker">
+            {[
+              { id: '', label: 'افتراضي (النظام)' },
+              { id: 'https://dns.google/dns-query', label: 'Google' },
+              { id: 'https://cloudflare-dns.com/dns-query', label: 'Cloudflare' },
+              { id: 'https://dns.quad9.net/dns-query', label: 'Quad9' },
+            ].map((opt) => (
+              <label key={opt.id} className="toggle-row">
+                <input
+                  type="radio"
+                  name="dns"
+                  checked={state.dnsResolver === opt.id}
+                  onChange={() => go({ type: 'setDnsResolver', resolver: opt.id })}
+                />
+                <span>{opt.label}</span>
+              </label>
+            ))}
+          </div>
 
           <h3>استثناءات المواقع (حجب معطّل)</h3>
           {p.siteExceptions.length === 0 && (
@@ -491,7 +552,7 @@ function App() {
         <section>
           <h2>حول DASK Browser</h2>
           <p className="privacy-note">
-            DASK Browser الإصدار 1.0.0 — متصفح ويب Windows أصلي على محرك
+            DASK Browser الإصدار 1.1.0 — متصفح ويب Windows أصلي على محرك
             Chromium المضمن عبر CEF (Chromium 158.0.8127.89).
           </p>
           <p className="privacy-note">
@@ -504,6 +565,23 @@ function App() {
             الخصوصية: كل البيانات محلية — لا تتبّع، لا رفع، لا كلمات مرور
             محفوظة، وقاعدة البيانات في مجلد ملفك الشخصي فقط.
           </p>
+
+          <h3>اختصارات لوحة المفاتيح</h3>
+          <div className="shortcut-card">
+            {[['Ctrl+T', 'تبويب جديد'], ['Ctrl+W', 'إغلاق التبويب'],
+              ['Ctrl+Tab', 'التبويب التالي'], ['Ctrl+Shift+Tab', 'التبويب السابق'],
+              ['Ctrl+N', 'نافذة جديدة'], ['Ctrl+Shift+N', 'نافذة خاصة'],
+              ['Ctrl+L', 'شريط العنوان'], ['Ctrl+D', 'إضافة للمفضلة'],
+              ['Ctrl+J', 'التنزيلات'], ['Ctrl+F', 'بحث في الصفحة'],
+              ['Ctrl+U', 'عرض المصدر'], ['Ctrl+R', 'تحديث'],
+              ['F11', 'ملء الشاشة'], ['Alt+← / Alt+→', 'رجوع / تقدم'],
+            ].map(([k, label]) => (
+              <div className="shortcut-row" key={k}>
+                <kbd>{k}</kbd>
+                <span>{label}</span>
+              </div>
+            ))}
+          </div>
         </section>
       )}
 

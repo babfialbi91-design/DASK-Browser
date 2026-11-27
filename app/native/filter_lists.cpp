@@ -264,11 +264,25 @@ void FilterLists::Initialize(const std::wstring& appdata_dir) {
   RebuildEngine();
 }
 
+void FilterLists::SetDisabledLists(const std::vector<std::wstring>& names) {
+  std::lock_guard<std::mutex> lock(disabled_mutex_);
+  disabled_lists_ = names;
+}
+
+bool FilterLists::IsListEnabled(const std::wstring& name) const {
+  std::lock_guard<std::mutex> lock(disabled_mutex_);
+  for (const std::wstring& disabled : disabled_lists_) {
+    if (disabled == name) return false;
+  }
+  return true;
+}
+
 void FilterLists::RebuildEngine() {
   // Parse every stored list into one engine; an empty engine (all files
   // missing) still allows the app to run with blocking inactive.
   std::string combined;
   for (const Source& src : kSources) {
+    if (!IsListEnabled(src.name)) continue;  // Phase 7.5: user-disabled
     const std::string text =
         ReadFileString(dir_ + L"\\" + std::wstring(src.name) + L".txt");
     if (!text.empty()) {
@@ -346,6 +360,7 @@ void FilterLists::UpdateAll(std::function<void()> on_done) {
 
   std::thread([this, on_done = std::move(on_done)]() {
     for (const Source& src : kSources) {
+      if (!IsListEnabled(src.name)) continue;  // Phase 7.5: user-disabled
       std::string data;
       std::wstring error;
       bool downloaded = HttpsDownload(src.url, &data, &error);

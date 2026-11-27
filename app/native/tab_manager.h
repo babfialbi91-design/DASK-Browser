@@ -30,6 +30,7 @@
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
 #include "include/cef_download_handler.h"
+#include "include/cef_find_handler.h"
 #include "include/cef_permission_handler.h"
 #include "include/wrapper/cef_message_router.h"
 #include "privacy_settings.h"
@@ -45,6 +46,9 @@ constexpr UINT WM_DASK_CREATE_HOST = WM_APP + 0x111;  // wParam: tab id, returns
 constexpr UINT WM_DASK_ALL_CLOSED = WM_APP + 0x112;   // every browser closed
 constexpr UINT WM_DASK_LAYOUT = WM_APP + 0x113;       // recompute tab layout
 constexpr UINT WM_DASK_DESTROY_HOST = WM_APP + 0x114; // wParam: tab id
+constexpr UINT WM_DASK_MENU_HOST = WM_APP + 0x115;   // Phase 7: create menu popup host, returns HWND
+constexpr UINT WM_DASK_MENU_CLOSED = WM_APP + 0x116; // Phase 7: menu popup deactivated/closed
+constexpr UINT WM_DASK_DESTROY_MENU_HOST = WM_APP + 0x117; // Phase 7: destroy popup on its owning thread
 
 // Height of the React toolbar region (tab strip + nav bar), CSS px.
 constexpr int kUiToolbarHeight = 84;
@@ -158,6 +162,39 @@ class TabManager {
   void SetHistoryEnabled(bool enabled);
   void SetRetentionDays(int days);
   void SetRestoreSession(bool enabled);
+  void SetLightTheme(bool enabled);
+  void SetDnsResolver(const std::string& resolver);  // Phase 7.5 (applies next launch)
+  void SetListEnabled(const std::string& name, bool enabled);  // Phase 7.5
+  void ViewSourceActive();  // Phase 7.5: Ctrl+U / menu
+  const std::string& dns_resolver() const { return dns_resolver_; }
+
+  // ---- Main menu commands (Phase 7) ----
+  static void SetForcePrivate(bool on) { force_private_ = on; }
+  // Reads one boolean/string preference synchronously (pre-CEF or pre-DB
+  // thread). Returns "" when unset.
+  static std::string ReadPrefString(const std::string& key);
+  static bool force_private() { return force_private_; }
+  void NewBrowserWindow(bool private_window);  // second process (real window)
+  void AdjustZoom(double step);  // +/- zoom on the active page; 0 = reset
+  void ToggleFullscreen();       // native borderless fullscreen of the window
+  void FindInPage(const std::string& text, bool forward, bool find_next);
+  void StopFind();
+  void OnFindResult(int count, int active);  // CefFindHandler callback
+  void OpenFindBar();  // Ctrl+F: reveal the find bar in the UI
+  void ShowDevTools();
+  void SavePageAsPdf();          // PrintToPDF into the Downloads folder
+  void PrintPage();              // window.print() in the active frame
+  void CopyPageLink();           // active tab URL to the clipboard
+  void ExitApp();                // safe close: WM_CLOSE on the main window
+  void ShowAppMenu();            // Phase 7: open the popup menu window
+  void CloseAppMenu();           // Phase 7: close it (deactivate/toggle)
+  void ToggleAppMenu();          // Phase 7: hamburger button
+  void OnMenuDeactivated();      // Phase 7: popup lost activation (Win32 thread)
+  void ShowAppMenuInternal();    // CEF UI thread
+  void CloseAppMenuInternal();   // CEF UI thread
+  void OnMenuBrowserCreated(CefRefPtr<CefBrowser> browser);
+  void OnMenuBrowserClosed();    // MenuClient::OnBeforeClose
+  bool fullscreen() const { return fullscreen_; }
 
   // ---- Permissions & profiles (Phase 5) ----
   void OnMediaAccessPermission(int64_t tab_id, const std::wstring& origin,
@@ -311,6 +348,17 @@ class TabManager {
   bool restore_session_ = false;
   bool history_enabled_ = true;
   int retention_days_ = 90;
+  bool fullscreen_ = false;   // Phase 7: borderless fullscreen state
+  CefRefPtr<CefBrowser> menu_browser_;  // Phase 7: popup menu browser
+  bool menu_open_ = false;              // Phase 7: menu popup visible
+  DWORD menu_deactivated_at_ = 0;       // Phase 7: hamburger-click debounce
+  double zoom_level_ = 0.0;   // Phase 7: active page zoom (Chromium units)
+  bool find_active_ = false;  // Phase 7: find-in-page bar open
+  int find_count_ = 0;        // last find result count
+  int find_active_match_ = 0; // 1-based active match index
+  static bool force_private_; // Phase 7: --private second-window process
+  bool light_theme_ = false;  // Phase 7: UI theme (false = dark, default)
+  std::string dns_resolver_;  // Phase 7.5: DoH provider (empty = system default)
 
   // Active downloads: CEF id -> callback used for cancel (CEF UI thread).
   std::map<uint32_t, CefRefPtr<CefDownloadItemCallback>> active_downloads_;

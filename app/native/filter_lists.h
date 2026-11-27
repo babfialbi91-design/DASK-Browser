@@ -37,12 +37,20 @@ class FilterLists {
     return engine_.load();
   }
 
+  // Phase 7.5: rebuild the engine from stored files (after a disabled-list
+  // change or a profile switch). Safe on the CEF UI thread.
+  void RebuildEngine();
+
   std::vector<FilterListStatus> Statuses() const;   // any thread
   bool updating() const { return updating_.load(); }
 
   // Downloads all sources in the background, validates, writes atomically,
   // rebuilds the engine, then runs |on_done| on the CEF UI thread.
   void UpdateAll(std::function<void()> on_done);
+
+  // Phase 7.5: lists the user disabled (kept on disk, excluded from engine).
+  void SetDisabledLists(const std::vector<std::wstring>& names);
+  bool IsListEnabled(const std::wstring& name) const;
 
  private:
   struct Source {
@@ -54,10 +62,12 @@ class FilterLists {
   static constexpr size_t kSourceCount = 3;
 
   bool LoadStored(const Source& src);  // parse from disk into the engine
-  void RebuildEngine();                // parse all stored files, swap engine
+  // (RebuildEngine is public since Phase 7.5)
   void PersistMeta();                  // write meta.json
 
   std::wstring dir_;
+  mutable std::mutex disabled_mutex_;
+  std::vector<std::wstring> disabled_lists_;  // guarded by disabled_mutex_
   std::atomic<std::shared_ptr<const adblock::FilterEngine>> engine_;
   std::atomic<bool> updating_{false};
   std::vector<FilterListStatus> statuses_;  // guarded by status_mutex_

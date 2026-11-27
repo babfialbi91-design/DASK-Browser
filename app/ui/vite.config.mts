@@ -16,6 +16,7 @@ export default defineConfig({
         index: 'index.html',
         newtab: 'newtab.html',
         settings: 'settings.html',
+        menu: 'menu.html',
       },
     },
   },

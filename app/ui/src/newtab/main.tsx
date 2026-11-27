@@ -26,7 +26,52 @@ const faviconLetter = (url: string) => {
   }
 }
 
+// Real site favicon (Chromium's own NTP uses the same Google service).
+// Falls back to the letter tile when the icon can't load (offline sites).
+const faviconUrl = (url: string) => {
+  try {
+    const host = new URL(url).hostname
+    // DuckDuckGo icon service: single origin, no redirect (better than
+    // Google's s2 which 301s to t3.gstatic.com and trips CSP).
+    return `https://icons.duckduckgo.com/ip3/${host}.ico`
+  } catch {
+    return ''
+  }
+}
+
+// Deterministic gradient background per site, from the domain hash.
+const GRADIENTS = [
+  ['#7c3aed', '#4f46e5'],
+  ['#e11d48', '#be123c'],
+  ['#0ea5e9', '#0369a1'],
+  ['#f59e0b', '#d97706'],
+  ['#10b981', '#047857'],
+  ['#8b5cf6', '#7c3aed'],
+  ['#ef4444', '#b91c1c'],
+  ['#14b8a6', '#0f766e'],
+]
+const tileGradient = (url: string) => {
+  try {
+    const host = new URL(url).hostname
+    let h = 0
+    for (let i = 0; i < host.length; i++) h = (h * 31 + host.charCodeAt(i)) >>> 0
+    const [a, b] = GRADIENTS[h % GRADIENTS.length]
+    return `linear-gradient(135deg, ${a}55, ${b}55)`
+  } catch {
+    return 'none'
+  }
+}
+
 function App() {
+  // Phase 7: follow the app theme (dark default) on <html data-theme>.
+  useEffect(() => {
+    return subscribe((s2) => {
+      document.documentElement.setAttribute(
+        'data-theme',
+        s2.lightTheme ? 'light' : 'dark',
+      )
+    })
+  }, [])
   const [state, setState] = useState<AppState | null>(null)
   const [query, setQuery] = useState('')
   const [editing, setEditing] = useState(false)
@@ -88,13 +133,54 @@ function App() {
           <button
             key={i}
             className="link-tile"
+            style={{ background: tileGradient(link.url) }}
             title={link.url}
             onClick={() => navigateSelf(link.url)}
           >
-            <span className="link-favicon">{faviconLetter(link.url)}</span>
+            <span className="link-favicon">
+              {faviconUrl(link.url) && (
+                <img
+                  src={faviconUrl(link.url)}
+                  alt=""
+                  width={22}
+                  height={22}
+                  loading="lazy"
+                  onError={(e) => {
+                    // Offline/blocked icon: fall back to the letter tile.
+                    const img = e.currentTarget
+                    img.style.display = 'none'
+                    const span = img.parentElement
+                    if (span && !span.dataset.fallback) {
+                      span.dataset.fallback = '1'
+                      span.textContent = faviconLetter(link.url)
+                    }
+                  }}
+                />
+              )}
+              {!faviconUrl(link.url) && faviconLetter(link.url)}
+            </span>
             <span className="link-title">{link.title}</span>
           </button>
         ))}
+        {/* Add-site tile (Phase 7.5): opens the inline editor with a new row. */}
+        <button
+          className="link-tile add-tile"
+          title="إضافة موقع"
+          aria-label="إضافة موقع"
+          onClick={() => {
+            setDraftLinks([...links, { title: '', url: 'https://' }])
+            setEditing(true)
+            setShowSettings(false)
+          }}
+        >
+          <span className="link-favicon add-favicon">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </span>
+          <span className="link-title">إضافة</span>
+        </button>
       </div>
 
       <div className="nt-row">

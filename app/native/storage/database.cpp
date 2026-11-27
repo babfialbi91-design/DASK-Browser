@@ -44,6 +44,10 @@ bool Database::Open(const std::string& path_utf8, std::string* error) {
     db_ = nullptr;
     return false;
   }
+  // Phase 7: several browser windows (second process) may open the same
+  // profile database. A generous busy timeout turns rare writer contention
+  // into a short wait instead of an SQLITE_BUSY error surfaced to the UI.
+  sqlite3_busy_timeout(db_, 10000);
   return true;
 }
 

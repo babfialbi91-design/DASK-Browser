@@ -6,7 +6,9 @@
 #include "winver.h"
 #undef APSTUDIO_READONLY_SYMBOLS
 
-IDI_ICON1 ICON "C:/Users/asfkep/.deepai-code/scratch/2026-11-25-dask-browser-01-foundation-md-777b6a7d/app/native/branding/app.ico"
+// Icon resource id 1: the normal app icon from DASK_Browser_Icon_Pack.
+// Numeric id so LoadIconW(hInstance, MAKEINTRESOURCEW(1)) finds it.
+1 ICON "C:/Users/asfkep/.deepai-code/scratch/2026-11-25-dask-browser-01-foundation-md-777b6a7d/app/native/branding/app.ico"
 
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION DASK_VERSION_MAJOR,DASK_VERSION_MINOR,DASK_VERSION_PATCH,0

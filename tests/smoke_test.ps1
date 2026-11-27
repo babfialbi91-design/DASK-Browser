@@ -59,7 +59,22 @@ if (-not $SkipBuild -and $cmake -and $cefRoot) {
         # Transient file-lock failures (antivirus / previous instance holding
         # chrome_elf.dll) are common on Windows: retry once before failing.
         Write-Host "build returned $firstExit - retrying once (possible transient file lock)"
-        Start-Sleep -Seconds 5
+        Start-Sleep -Seconds 15
+        & cmake --build $buildDir --config Release --parallel
+    }
+    if ($LASTEXITCODE -ne 0) {
+        # Last resort: pre-copy chrome_elf.dll into bin/ (the most commonly
+        # locked artifact). When the copy succeeds the msbuild copy step
+        # becomes a no-op and a final retry goes through.
+        $src = Join-Path $cefRoot "Release\chrome_elf.dll"
+        $dst = Join-Path $buildDir "bin\chrome_elf.dll"
+        Copy-Item $src $dst -Force -ErrorAction SilentlyContinue
+        # Match the source timestamp so msbuild's copy_if_different becomes
+        # a no-op (it re-copies on timestamp mismatch).
+        if ((Test-Path $src) -and (Test-Path $dst)) {
+            (Get-Item $dst).LastWriteTime = (Get-Item $src).LastWriteTime
+        }
+        Start-Sleep -Seconds 12
         & cmake --build $buildDir --config Release --parallel
     }
     if ($LASTEXITCODE -ne 0) { Fail "cmake build failed" }

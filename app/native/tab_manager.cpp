@@ -189,6 +189,9 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
                CefRefPtr<CefMessageRouterBrowserSide::Callback> callback) override {
     // Authorization: browser == UI browser, or a trusted internal page.
     if (!mgr_->ui_browser_ || !browser->IsSame(mgr_->ui_browser_)) {
+      if (mgr_->menu_browser_ && browser->IsSame(mgr_->menu_browser_)) {
+        // trusted: the menu popup browser (Phase 7)
+      } else {
       TabManager::Tab* tab = mgr_->FindTabByBrowser(browser);
       const std::wstring frame_url = frame->GetURL().ToWString();
       const bool trusted = tab && tab->internal &&
@@ -196,6 +199,7 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
       if (!trusted) {
         callback->Failure(403, "bridge access denied for this page");
         return true;
+      }
       }
     }
 
@@ -221,7 +225,11 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
         "setRetentionDays", "setRestoreSession", "cancelDownload",
         "removeDownload", "openDownload", "openDownloadsFolder",
         "respondPermission", "setPermission", "resetPermission",
-        "addProfile", "switchProfile", "deleteProfile"};
+        "addProfile", "switchProfile", "deleteProfile", "newWindow",
+        "newPrivateWindow", "adjustZoom", "toggleFullscreen", "findInPage",
+        "stopFind", "showDevTools", "savePagePdf", "printPage",
+        "copyPageLink", "exitApp", "setLightTheme", "toggleAppMenu",
+        "closeAppMenu", "setDnsResolver", "setListEnabled", "viewSource"};
     if (!kAllowedRequests.count(type)) {
       callback->Failure(403, "unknown bridge request type");
       return true;
@@ -396,6 +404,52 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
       mgr_->SwitchProfile(dict->GetString("id").ToString());
     } else if (type == "deleteProfile") {
       mgr_->DeleteProfile(dict->GetString("id").ToString());
+    } else if (type == "newWindow") {
+      mgr_->NewBrowserWindow(false);
+    } else if (type == "newPrivateWindow") {
+      mgr_->NewBrowserWindow(true);
+    } else if (type == "adjustZoom") {
+      mgr_->AdjustZoom(dict->GetDouble("step"));
+    } else if (type == "toggleFullscreen") {
+      mgr_->ToggleFullscreen();
+    } else if (type == "findInPage") {
+      const std::string text = dict->GetString("text").ToString();
+      if (text.empty()) {
+        mgr_->StopFind();
+      } else {
+        mgr_->FindInPage(text, dict->GetBool("forward"),
+                         dict->GetBool("findNext"));
+        {
+          std::lock_guard<std::mutex> lock(mgr_->state_mutex_);
+          mgr_->find_active_ = true;
+        }
+        mgr_->PushUiEvent();
+      }
+    } else if (type == "stopFind") {
+      mgr_->StopFind();
+    } else if (type == "showDevTools") {
+      mgr_->ShowDevTools();
+    } else if (type == "savePagePdf") {
+      mgr_->SavePageAsPdf();
+    } else if (type == "printPage") {
+      mgr_->PrintPage();
+    } else if (type == "copyPageLink") {
+      mgr_->CopyPageLink();
+    } else if (type == "toggleAppMenu") {
+      mgr_->ToggleAppMenu();
+    } else if (type == "closeAppMenu") {
+      mgr_->CloseAppMenu();
+    } else if (type == "exitApp") {
+      mgr_->ExitApp();
+    } else if (type == "setLightTheme") {
+      mgr_->SetLightTheme(dict->GetBool("enabled"));
+    } else if (type == "setDnsResolver") {
+      mgr_->SetDnsResolver(dict->GetString("resolver").ToString());
+    } else if (type == "setListEnabled") {
+      mgr_->SetListEnabled(dict->GetString("name").ToString(),
+                           dict->GetBool("enabled"));
+    } else if (type == "viewSource") {
+      mgr_->ViewSourceActive();
     } else if (type == "setQuickLinks") {
       CefRefPtr<CefListValue> list = dict->GetList("links");
       if (list && list->GetSize() <= 24) {
@@ -550,6 +604,7 @@ class DaskResourceHandler : public CefResourceRequestHandler,
 
 class TabClient : public CefClient,
                   public CefDisplayHandler,
+                  public CefFindHandler,
                   public CefDownloadHandler,
                   public CefLoadHandler,
                   public CefLifeSpanHandler,
@@ -614,6 +669,22 @@ class TabClient : public CefClient,
   // permission prompt flow. Default (unhandled) = deny with Alloy style.
   CefRefPtr<CefPermissionHandler> GetPermissionHandler() override {
     return this;
+  }
+
+  // CefFindHandler (Phase 7): report find-in-page match counts to the UI.
+  CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
+
+  void OnFindResult(CefRefPtr<CefBrowser> browser,
+                    int identifier,
+                    int count,
+                    const CefRect& selectionRect,
+                    int activeMatchOrdinal,
+                    bool finalUpdate) override {
+    (void)browser;
+    (void)identifier;
+    (void)selectionRect;
+    if (!finalUpdate) return;
+    mgr_->OnFindResult(count, activeMatchOrdinal);
   }
 
   bool OnRequestMediaAccessPermission(
@@ -779,6 +850,7 @@ void TabManager::Initialize(HWND main_hwnd) {
 
   // Phase 3: privacy settings and filter lists (per profile / shared cache).
   privacy_.Load(profile_store_->privacy_path());
+  lists_.SetDisabledLists(privacy_.DisabledLists());
   lists_.Initialize(AppDataDir());
 
   CefMessageRouterConfig config;
@@ -798,6 +870,7 @@ void TabManager::Start() {
       prefs.GetBool("restoreSession", false, &restore_session_, &db_err);
       prefs.GetBool("historyEnabled", true, &history_enabled_, &db_err);
       prefs.GetInt("historyRetentionDays", 90, &retention_days_, &db_err);
+      prefs.GetBool("lightTheme", false, &light_theme_, &db_err);
     }
   }
 
@@ -907,6 +980,8 @@ void TabManager::RequestCloseAll() {
 void TabManager::CreateTab(std::wstring url, bool private_tab) {
   PostToCef([this, url, private_tab]() {
     if (closing_all_ || tabs_.size() >= static_cast<size_t>(kMaxTabs)) return;
+    // Phase 7: in a --private process window every tab is private.
+    const bool priv = private_tab || force_private_;
     const bool internal = url == kNewTabUrl ||
                           url.rfind(kDaskUiOrigin, 0) == 0;
 
@@ -922,7 +997,7 @@ void TabManager::CreateTab(std::wstring url, bool private_tab) {
     Tab tab;
     tab.id = id;
     tab.internal = internal;
-    tab.private_flag = private_tab;
+    tab.private_flag = priv;
     tab.url = url;
 
     RECT rc;
@@ -940,7 +1015,7 @@ void TabManager::CreateTab(std::wstring url, bool private_tab) {
     // Private tabs use a shared in-memory request context: cookies and cache
     // never touch the default profile storage.
     CefRefPtr<CefRequestContext> context;
-    if (private_tab) {
+    if (priv) {
       if (!private_context_) {
         private_context_ = CefRequestContext::CreateContext(
             CefRequestContextSettings(), nullptr);
@@ -1098,6 +1173,8 @@ void TabManager::OnBrowserCreated(int64_t tab_id, CefRefPtr<CefBrowser> browser)
       tab.browser = browser;
       if (tab.id == active_tab_id_) {
         browser->GetHost()->SetFocus(true);
+        // Phase 7: newly created active page follows the chosen zoom level.
+        browser->GetHost()->SetZoomLevel(zoom_level_);
       }
       break;
     }
@@ -1232,7 +1309,11 @@ void TabManager::SetActive(Tab* tab) {
     layout_active_ = active_tab_id_;
     ::LeaveCriticalSection(&layout_lock_);
   }
-  if (tab->browser) tab->browser->GetHost()->SetFocus(true);
+  if (tab->browser) {
+    tab->browser->GetHost()->SetFocus(true);
+    // Phase 7: carry the chosen zoom level over to the newly active page.
+    tab->browser->GetHost()->SetZoomLevel(zoom_level_);
+  }
   RequestLayout();
 }
 
@@ -1379,6 +1460,14 @@ std::string TabManager::BuildStateJson(bool focus_address) {
     if (!db_note_.empty()) root_dict->SetString("dbNote", db_note_);
   }
 
+  root_dict->SetBool("fullscreen", fullscreen_);
+  root_dict->SetInt("zoomPercent", static_cast<int>(std::llround(std::exp(zoom_level_ * 0.1823215568) * 100.0)));
+  root_dict->SetBool("lightTheme", light_theme_);
+  root_dict->SetString("dnsResolver", dns_resolver_);
+  root_dict->SetBool("findActive", find_active_);
+  root_dict->SetInt("findCount", find_count_);
+  root_dict->SetInt("findActiveMatch", find_active_match_);
+
   CefRefPtr<CefDictionaryValue> engine = CefDictionaryValue::Create();
   engine->SetString("id", engine_.id);
   engine->SetString("custom", engine_.custom);
@@ -1418,6 +1507,12 @@ std::string TabManager::BuildStateJson(bool focus_address) {
   }
   privacy->SetList("lists", list_items);
   privacy->SetBool("updating", lists_.updating());
+  {
+    CefRefPtr<CefListValue> dis = CefListValue::Create();
+    const auto disabled = privacy_.DisabledLists();
+    for (size_t i = 0; i < disabled.size(); ++i) dis->SetString(i, disabled[i]);
+    privacy->SetList("disabledLists", dis);
+  }
 
   CefRefPtr<CefDictionaryValue> blocked = CefDictionaryValue::Create();
   CefRefPtr<CefDictionaryValue> tab_counts = CefDictionaryValue::Create();
@@ -1637,6 +1732,8 @@ void TabManager::StartDatabase() {
                                &db_err);
       settings_store_->GetInt("historyRetentionDays", 90, &retention_days_,
                               &db_err);
+      settings_store_->GetBool("lightTheme", false, &light_theme_, &db_err);
+      settings_store_->GetString("dnsResolver", "", &dns_resolver_, &db_err);
       if (history_enabled_ && retention_days_ > 0) {
         const int64_t now = static_cast<int64_t>(time(nullptr));
         history_store_->Prune(now - retention_days_ * 86400, &db_err);
@@ -1866,6 +1963,352 @@ void TabManager::SetRetentionDays(int days) {
                             &err);
     }
   });
+}
+
+void TabManager::OnFindResult(int count, int active) {
+  // Runs on the CEF UI thread; do not hold state_mutex_ across PushUiEvent
+  // (BuildStateJson reads the same fields on this thread).
+  find_count_ = count;
+  find_active_match_ = active;
+  PushUiEvent();
+}
+
+namespace {
+// Phase 7 helper: UTF-8 path for storage helpers (file-local).
+std::string WstrToUtf8(const std::wstring& w) {
+  int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), nullptr,
+                              0, nullptr, nullptr);
+  std::string out(n, 0);
+  if (n) WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), out.data(),
+                             n, nullptr, nullptr);
+  return out;
+}
+}  // namespace
+
+void TabManager::OpenFindBar() {
+  // Called from the Win32 keyboard-hook thread: set the flag on the CEF
+  // UI thread via PostToCef, never touch waiter state cross-thread.
+  PostToCef([this]() {
+    find_active_ = true;
+    PushUiEvent();
+  });
+}
+
+// Phase 7: minimal client for the menu popup browser. The menu page talks
+// through the shared message router; closing destroys its popup host window.
+class MenuClient : public CefClient, public CefLifeSpanHandler {
+ public:
+  explicit MenuClient(TabManager* mgr) : mgr_(mgr) {}
+  CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
+
+  void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
+    mgr_->OnMenuBrowserCreated(browser);
+  }
+
+  bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+                                CefRefPtr<CefFrame> frame,
+                                CefProcessId source_process,
+                                CefRefPtr<CefProcessMessage> message) override {
+    return mgr_->router()->OnProcessMessageReceived(browser, frame,
+                                                    source_process, message);
+  }
+
+  void OnBeforeClose(CefRefPtr<CefBrowser> browser) override {
+    mgr_->OnMenuBrowserClosed();
+    (void)browser;
+  }
+
+ private:
+  TabManager* mgr_;
+  IMPLEMENT_REFCOUNTING(MenuClient);
+  DISALLOW_COPY_AND_ASSIGN(MenuClient);
+};
+
+void TabManager::ShowAppMenu() {
+  PostToCef([this]() { ShowAppMenuInternal(); });
+}
+
+void TabManager::ShowAppMenuInternal() {
+  if (menu_open_) return;
+  // Size and position the popup under the toolbar (RTL: left edge).
+  HWND popup = reinterpret_cast<HWND>(::SendMessageW(
+      main_hwnd_, WM_DASK_MENU_HOST, 0, 0));
+  if (!popup) return;
+
+  CefWindowInfo info;
+  RECT rc;
+  ::GetClientRect(popup, &rc);
+  info.SetAsChild(popup,
+                  CefRect(0, 0, rc.right - rc.left, rc.bottom - rc.top));
+  CefRefPtr<MenuClient> client = new MenuClient(this);
+  CefBrowserSettings settings;
+  CefString url;
+  url.FromWString(L"http://dask.ui/menu.html");
+  CefBrowserHost::CreateBrowser(info, client, url, settings, nullptr,
+                                nullptr);
+  menu_open_ = true;
+}
+
+void TabManager::CloseAppMenu() {
+  PostToCef([this]() { CloseAppMenuInternal(); });
+}
+
+void TabManager::CloseAppMenuInternal() {
+  if (!menu_open_) return;
+  menu_open_ = false;
+  menu_deactivated_at_ = 0;  // explicit close: no hamburger-click debounce
+  if (menu_browser_) {
+    // OnBeforeClose tears down the popup host window (menu browser path).
+    menu_browser_->GetHost()->CloseBrowser(true);
+  } else {
+    // Browser still initializing: destroy the popup host on its own thread.
+    ::SendMessageW(main_hwnd_, WM_DASK_DESTROY_MENU_HOST, 0, 0);
+    menu_browser_ = nullptr;
+  }
+}
+
+void TabManager::ToggleAppMenu() {
+  PostToCef([this]() {
+    if (menu_open_) {
+      CloseAppMenuInternal();
+      return;
+    }
+    // Ignore the toggle sent by the same hamburger click that deactivated
+    // (and thereby closed) the popup a moment ago.
+    if (menu_deactivated_at_ != 0 &&
+        ::GetTickCount() - menu_deactivated_at_ < 400) {
+      return;
+    }
+    ShowAppMenuInternal();
+  });
+}
+
+void TabManager::OnMenuDeactivated() {
+  // Called on the Win32 thread when the popup lost activation.
+  const DWORD now = ::GetTickCount();
+  PostToCef([this, now]() {
+    if (!menu_open_) return;
+    menu_deactivated_at_ = now;
+    CloseAppMenuInternal();
+  });
+}
+
+void TabManager::OnMenuBrowserCreated(CefRefPtr<CefBrowser> browser) {
+  menu_browser_ = browser;
+}
+
+void TabManager::OnMenuBrowserClosed() {
+  // Runs on the CEF UI thread. Destroy the popup host on the Win32 thread
+  // and clear state.
+  menu_browser_ = nullptr;
+  if (menu_open_) menu_open_ = false;
+  ::SendMessageW(main_hwnd_, WM_DASK_DESTROY_MENU_HOST, 0, 0);
+}
+
+// ---- Main menu commands (Phase 7) ------------------------------------------
+
+bool TabManager::force_private_ = false;
+
+void TabManager::NewBrowserWindow(bool private_window) {
+  // A real top-level window: a second browser process sharing the same
+  // user data (profiles dir). The private variant runs with --private so
+  // ALL its tabs are private (no session, no history, no permission store).
+  wchar_t exe[MAX_PATH] = {};
+  ::GetModuleFileNameW(nullptr, exe, MAX_PATH);
+  const wchar_t* args = private_window ? L"--private" : nullptr;
+  const HINSTANCE inst =
+      ::ShellExecuteW(nullptr, L"open", exe, args, nullptr, SW_SHOWNORMAL);
+  if (reinterpret_cast<intptr_t>(inst) <= 32) {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    db_note_ = L"تعذّر فتح نافذة جديدة.";
+    PushUiEvent();
+  }
+}
+
+void TabManager::AdjustZoom(double step) {
+  // Chromium zoom level units: level = ln(scale) / ln(1.2). 0 = 100%.
+  // Clamp to roughly 25% .. 500%. Applies to any active page, including
+  // internal dask.ui pages (like Chromium's own zoom on the NTP).
+  Tab* tab = FindTab(active_tab_id_);
+  if (!tab || !tab->browser) return;
+  if (step == 0.0) {
+    zoom_level_ = 0.0;
+  } else {
+    zoom_level_ = std::clamp(zoom_level_ + step, -6.6, 5.2);
+  }
+  tab->browser->GetHost()->SetZoomLevel(zoom_level_);
+  PushUiEvent();
+}
+
+void TabManager::ToggleFullscreen() {
+  // Borderless fullscreen: strip the window style + cover the monitor.
+  const HWND hwnd = main_hwnd_;
+  if (!hwnd) return;
+  static WINDOWPLACEMENT saved = {};
+  saved.length = sizeof(WINDOWPLACEMENT);
+  const LONG_PTR style = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
+  if (!fullscreen_) {
+    ::GetWindowPlacement(hwnd, &saved);
+    ::SetWindowLongPtrW(hwnd, GWL_STYLE, style & ~(WS_CAPTION | WS_THICKFRAME));
+    const HMONITOR mon = ::MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi = {};
+    mi.cbSize = sizeof(mi);
+    if (::GetMonitorInfoW(mon, &mi)) {
+      ::SetWindowPos(hwnd, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top,
+                     mi.rcMonitor.right - mi.rcMonitor.left,
+                     mi.rcMonitor.bottom - mi.rcMonitor.top,
+                     SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+    }
+    fullscreen_ = true;
+  } else {
+    ::SetWindowLongPtrW(hwnd, GWL_STYLE, style | WS_CAPTION | WS_THICKFRAME);
+    ::SetWindowPlacement(hwnd, &saved);
+    ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                   SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                       SWP_FRAMECHANGED);
+    fullscreen_ = false;
+  }
+  PushUiEvent();
+}
+
+void TabManager::FindInPage(const std::string& text, bool forward,
+                            bool find_next) {
+  Tab* tab = FindTab(active_tab_id_);
+  if (!tab || !tab->browser || tab->internal) return;
+  CefString query;
+  query.FromString(text);
+  tab->browser->GetHost()->Find(query, forward, /*matchCase=*/false,
+                                find_next);
+}
+
+void TabManager::StopFind() {
+  Tab* tab = FindTab(active_tab_id_);
+  if (!tab || !tab->browser) return;
+  tab->browser->GetHost()->StopFinding(/*clearSelection=*/true);
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    find_active_ = false;
+    find_count_ = 0;
+    find_active_match_ = 0;
+  }
+  PushUiEvent();
+}
+
+void TabManager::ShowDevTools() {
+  Tab* tab = FindTab(active_tab_id_);
+  if (!tab || !tab->browser || tab->internal) return;
+  if (tab->browser->GetHost()->HasDevTools()) {
+    tab->browser->GetHost()->CloseDevTools();
+  } else {
+    tab->browser->GetHost()->ShowDevTools(CefWindowInfo(), nullptr,
+                                          CefBrowserSettings(),
+                                          CefPoint());
+  }
+}
+
+void TabManager::SavePageAsPdf() {
+  Tab* tab = FindTab(active_tab_id_);
+  if (!tab || !tab->browser || tab->internal) return;
+  // Name the PDF after the page title, sanitized like downloads.
+  std::wstring name = tab->title.empty() ? L"صفحة" : tab->title;
+  for (wchar_t& c : name) {
+    if (c == L'\\' || c == L'/' || c == L':' || c == L'*' || c == L'?' ||
+        c == L'"' || c == L'<' || c == L'>' || c == L'|') {
+      c = L'_';
+    }
+  }
+  if (name.size() > 120) name.resize(120);
+  const std::wstring path =
+      storage::UniqueDownloadPath(DownloadsDir(),
+          WstrToUtf8(name) + ".pdf");
+  tab->browser->GetHost()->PrintToPDF(path, CefPdfPrintSettings(), nullptr);
+}
+
+void TabManager::PrintPage() {
+  Tab* tab = FindTab(active_tab_id_);
+  if (!tab || !tab->browser || tab->internal) return;
+  // Chromium's print pipeline handles window.print() (preview + dialog).
+  tab->browser->GetMainFrame()->ExecuteJavaScript(
+      CefString("window.print()"), tab->browser->GetMainFrame()->GetURL(), 0);
+}
+
+void TabManager::CopyPageLink() {
+  Tab* tab = FindTab(active_tab_id_);
+  if (!tab || tab->url.empty()) return;
+  if (!::OpenClipboard(main_hwnd_)) return;
+  const std::wstring text = tab->url + L"\0";
+  const HGLOBAL mem = ::GlobalAlloc(GMEM_MOVEABLE,
+                                    text.size() * sizeof(wchar_t));
+  if (mem) {
+    void* dst = ::GlobalLock(mem);
+    if (dst) {
+      memcpy(dst, text.c_str(), text.size() * sizeof(wchar_t));
+      ::GlobalUnlock(mem);
+      ::EmptyClipboard();
+      ::SetClipboardData(CF_UNICODETEXT, mem);
+    } else {
+      ::GlobalFree(mem);
+    }
+  }
+  ::CloseClipboard();
+}
+
+void TabManager::ExitApp() {
+  // Same safe path as the window close button.
+  ::PostMessageW(main_hwnd_, WM_CLOSE, 0, 0);
+}
+
+std::string TabManager::ReadPrefString(const std::string& key) {
+  // Synchronous read used before the DB thread starts (browser startup).
+  ProfileStore store(AppDataDir());
+  storage::Database db;
+  std::string err;
+  if (!db.Open(Utf8FromWide(store.db_path()), &err) || !db.Migrate(&err)) {
+    return {};
+  }
+  storage::Settings prefs(&db);
+  std::string value;
+  if (!prefs.GetString(key, "", &value, &err)) value.clear();
+  return value;
+}
+
+void TabManager::SetDnsResolver(const std::string& resolver) {
+  // Phase 7.5: DoH provider choice. Chromium's DoH is a network-service
+  // switch, so a change takes effect on the next launch (stated honestly
+  // in the settings UI).
+  dns_resolver_ = resolver;
+  PostToDb([this, resolver]() {
+    if (!settings_store_) return;
+    std::string err;
+    settings_store_->SetString("dnsResolver", resolver, &err);
+  });
+  PushUiEvent();
+}
+
+void TabManager::SetListEnabled(const std::string& name, bool enabled) {
+  privacy_.SetListEnabled(CefString(name).ToWString(), enabled);
+  privacy_.Save();
+  lists_.SetDisabledLists(privacy_.DisabledLists());
+  lists_.RebuildEngine();  // atomic engine swap on this (CEF UI) thread
+  PushUiEvent();
+}
+
+void TabManager::ViewSourceActive() {
+  PostToCef([this]() {
+    Tab* tab = FindTab(active_tab_id_);
+    if (!tab || tab->internal || tab->url.empty()) return;
+    CreateTab(L"view-source:" + tab->url);
+  });
+}
+
+void TabManager::SetLightTheme(bool enabled) {
+  light_theme_ = enabled;
+  PostToDb([this, enabled]() {
+    if (!settings_store_) return;
+    std::string err;
+    settings_store_->SetBool("lightTheme", enabled, &err);
+  });
+  PushUiEvent();
 }
 
 void TabManager::SetRestoreSession(bool enabled) {
@@ -2196,6 +2639,8 @@ void TabManager::PerformProfileSwitch() {
   std::string err;
   if (profile_store_->SwitchProfile(id, &err)) {
     privacy_.Load(profile_store_->privacy_path());
+    lists_.SetDisabledLists(privacy_.DisabledLists());
+    lists_.RebuildEngine();
   }
   // Restore the new profile's session (same logic as Start()).
   {
@@ -2210,6 +2655,7 @@ void TabManager::PerformProfileSwitch() {
       prefs.GetBool("restoreSession", false, &restore_session_, &db_err);
       prefs.GetBool("historyEnabled", true, &history_enabled_, &db_err);
       prefs.GetInt("historyRetentionDays", 90, &retention_days_, &db_err);
+      prefs.GetBool("lightTheme", false, &light_theme_, &db_err);
     }
   }
   bool has_session = false;

@@ -7,10 +7,13 @@
 
 #include <cstdint>
 #include <map>
+#include <string>
 
-#include "dask_app.h"
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
+#include "dask_app.h"
+#include "storage/database.h"
+#include "storage/stores.h"
 #include "tab_manager.h"
 
 namespace dask {
@@ -18,6 +21,7 @@ namespace {
 
 constexpr wchar_t kWindowClassName[] = L"DaskBrowserMainWindow";
 constexpr wchar_t kHostClassName[] = L"DaskTabHost";
+constexpr wchar_t kMenuPopupClassName[] = L"DaskMenuPopup";
 constexpr int kInitialWidth = 1280;
 constexpr int kInitialHeight = 800;
 
@@ -84,9 +88,12 @@ void DoLayout() {
                     : (SWP_NOZORDER | SWP_NOACTIVATE | SWP_HIDEWINDOW));
       }
     }
-    // Keep the embedded Chromium child in sync with the host.
-    if (HWND chrome = ::FindWindowExW(host, nullptr, L"Chrome_WidgetWin_0",
-                                      nullptr)) {
+    // Keep the embedded Chromium child in sync with the host. CEF 158 uses
+    // the aura widget class (Chrome_WidgetWin_1); keep _0 as a fallback.
+    HWND chrome = ::FindWindowExW(host, nullptr, L"Chrome_WidgetWin_1", nullptr);
+    if (!chrome)
+      chrome = ::FindWindowExW(host, nullptr, L"Chrome_WidgetWin_0", nullptr);
+    if (chrome) {
       const int h = (id == 0) ? kUiToolbarHeight : content_h;
       if (h > 0) {
         ::SetWindowPos(chrome, nullptr, 0, 0, width, h,
@@ -158,10 +165,22 @@ LRESULT CALLBACK KeyboardProc(int code, WPARAM wparam, LPARAM lparam) {
             break;
           case 'N':
             if (shift && !KeyDebounced(vk, 300)) {
-              mgr->CreateTab(kNewTabUrl, true);  // private tab (Ctrl+Shift+N)
-            } else {
-              handled = false;
+              // Phase 7: a real separate private window (new process).
+              mgr->NewBrowserWindow(true);  // Ctrl+Shift+N
+            } else if (!shift && !KeyDebounced(vk, 300)) {
+              mgr->NewBrowserWindow(false);  // Ctrl+N
             }
+            break;
+          case 'J':  // Ctrl+J: open the downloads page
+            if (!KeyDebounced(vk, 300)) {
+              mgr->CreateTab(L"http://dask.ui/settings.html#downloads");
+            }
+            break;
+          case 'F':  // Ctrl+F: find in page (state flag opens the find bar)
+            if (!KeyDebounced(vk, 300)) mgr->OpenFindBar();
+            break;
+          case 'U':  // Ctrl+U: view page source (Chromium's own viewer)
+            if (!KeyDebounced(vk, 300)) mgr->ViewSourceActive();
             break;
           case VK_TAB:
             mgr->CycleTab(shift ? -1 : 1);
@@ -169,6 +188,8 @@ LRESULT CALLBACK KeyboardProc(int code, WPARAM wparam, LPARAM lparam) {
           default:
             handled = false;
         }
+      } else if (vk == VK_F11) {
+        mgr->ToggleFullscreen();
       } else if (alt && !ctrl) {
         if (vk == VK_LEFT) {
           mgr->Back();
@@ -190,6 +211,22 @@ LRESULT CALLBACK KeyboardProc(int code, WPARAM wparam, LPARAM lparam) {
 // ---------------------------------------------------------------------------
 // Main window.
 // ---------------------------------------------------------------------------
+
+// Phase 7: menu popup window proc — closes the menu when it loses focus
+// (clicks outside / the user switched away).
+LRESULT CALLBACK MenuPopupWndProc(HWND hwnd, UINT msg, WPARAM wparam,
+                                  LPARAM lparam) {
+  switch (msg) {
+    case WM_ACTIVATE:
+      if (LOWORD(wparam) == WA_INACTIVE) {
+        const HWND main = ::GetWindow(hwnd, GW_OWNER);
+        if (main) ::PostMessageW(main, WM_DASK_MENU_CLOSED, 0, 0);
+      }
+      return 0;
+    default:
+      return ::DefWindowProcW(hwnd, msg, wparam, lparam);
+  }
+}
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
   switch (msg) {
@@ -231,6 +268,42 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
       }
       return 0;
     }
+    case WM_DASK_MENU_HOST: {
+      // Phase 7: borderless popup owned by the main window hosting menu.html.
+      const int menu_w = 300, menu_h = 600;
+      RECT rc;
+      ::GetClientRect(hwnd, &rc);
+      // RTL toolbar: the hamburger sits on the left edge. Convert client
+      // coords to screen coords (WS_POPUP uses screen coordinates).
+      POINT origin = {rc.left + 8, kUiToolbarHeight};
+      ::ClientToScreen(hwnd, &origin);
+      HWND popup = ::CreateWindowExW(
+          WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kMenuPopupClassName, L"",
+          WS_POPUP, origin.x, origin.y, menu_w, menu_h, hwnd, nullptr,
+          reinterpret_cast<HINSTANCE>(::GetWindowLongPtrW(hwnd, GWLP_HINSTANCE)),
+          nullptr);
+      if (popup) {
+        // Visible + focused so clicks outside deactivate (and close) it.
+        ::ShowWindow(popup, SW_SHOW);
+        ::SetForegroundWindow(popup);
+      }
+      return reinterpret_cast<LRESULT>(popup);
+    }
+    case WM_DASK_MENU_CLOSED:
+      // The popup was deactivated or destroyed: tear down the menu browser.
+      TabManager::Get()->OnMenuDeactivated();
+      return 0;
+    case WM_DASK_DESTROY_MENU_HOST:
+      // Destroy the popup on the thread that owns it.
+      ::EnumWindows([](HWND w, LPARAM) -> BOOL {
+        wchar_t cls[64] = {};
+        ::GetClassNameW(w, cls, 64);
+        if (::lstrcmpW(cls, L"DaskMenuPopup") == 0) {
+          ::DestroyWindow(w);
+        }
+        return TRUE;
+      }, 0);
+      return 0;
     case WM_DASK_LAYOUT: {
       ShowActiveTab();
       DoLayout();
@@ -261,6 +334,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 int RunBrowserWindow(HINSTANCE h_instance, int n_cmd_show) {
   const std::wstring exe_dir = ExeDirectory();
 
+  // Phase 7: "new private window" opens a second process with --private:
+  // every tab is private (no session restore, no history, no permissions
+  // persisted) inside a genuinely separate top-level window.
+  const wchar_t* cmdline = ::GetCommandLineW();
+  if (cmdline && std::wstring(cmdline).find(L"--private") != std::wstring::npos) {
+    TabManager::SetForcePrivate(true);
+  }
+
   if (!CefRuntimeFilesPresent(exe_dir)) {
     ShowFatalError(
         L"DASK Browser",
@@ -271,6 +352,9 @@ int RunBrowserWindow(HINSTANCE h_instance, int n_cmd_show) {
     return 1;
   }
 
+  // Phase 7.5: DNS-over-HTTPS provider (read before CefInitialize so the
+  // command-line switch is applied on this launch).
+  SetDoHResolver(TabManager::ReadPrefString("dnsResolver"));
   // CEF configuration. Sandbox stays enabled.
   CefSettings settings;
   CefString(&settings.browser_subprocess_path)
@@ -305,7 +389,10 @@ int RunBrowserWindow(HINSTANCE h_instance, int n_cmd_show) {
   wc.lpfnWndProc = WndProc;
   wc.hInstance = h_instance;
   wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
-  wc.hIcon = ::LoadIconW(nullptr, IDI_APPLICATION);
+  // App icon (title bar + taskbar + desktop shortcut) from the embedded
+  // resource (DASK_Browser_Icon_Pack/01_Normal_Light).
+  wc.hIcon = ::LoadIconW(h_instance, MAKEINTRESOURCEW(1));
+  if (!wc.hIcon) wc.hIcon = ::LoadIconW(nullptr, IDI_APPLICATION);
   wc.hIconSm = wc.hIcon;
   wc.hbrBackground = ::CreateSolidBrush(RGB(20, 21, 25));
   wc.lpszClassName = kWindowClassName;
@@ -320,6 +407,13 @@ int RunBrowserWindow(HINSTANCE h_instance, int n_cmd_show) {
   hc.hbrBackground = ::CreateSolidBrush(RGB(20, 21, 25));
   hc.lpszClassName = kHostClassName;
   ::RegisterClassExW(&hc);
+
+  // Phase 7: dedicated class for the menu popup (closes on deactivation).
+  WNDCLASSEXW mc = wc;
+  mc.lpfnWndProc = MenuPopupWndProc;
+  mc.hbrBackground = ::CreateSolidBrush(RGB(20, 21, 25));
+  mc.lpszClassName = kMenuPopupClassName;
+  ::RegisterClassExW(&mc);
 
   RECT frame = {0, 0, kInitialWidth, kInitialHeight};
   ::AdjustWindowRect(&frame, WS_OVERLAPPEDWINDOW, FALSE);

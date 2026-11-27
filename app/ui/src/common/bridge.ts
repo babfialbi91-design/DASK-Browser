@@ -81,6 +81,7 @@ export interface PrivacyState {
   thirdPartyCookies: boolean
   siteExceptions: SiteException[]
   lists: FilterListStatus[]
+  disabledLists?: string[]
   updating: boolean
   blocked: { total: number }
   tabBlockedCounts: Record<string, number>
@@ -102,6 +103,13 @@ export interface AppState {
   historyEnabled: boolean
   retentionDays: number
   dbNote?: string
+  lightTheme: boolean
+  dnsResolver: string
+  fullscreen: boolean
+  zoomPercent: number
+  findActive: boolean
+  findCount: number
+  findActiveMatch: number
   profiles: ProfileUi[]
   permissions: PermissionUi[]
   permissionPrompt?: PermissionPromptUi
@@ -151,6 +159,23 @@ export type Request =
   | { type: 'addProfile'; name: string }
   | { type: 'switchProfile'; id: string }
   | { type: 'deleteProfile'; id: string }
+  | { type: 'newWindow' }
+  | { type: 'newPrivateWindow' }
+  | { type: 'adjustZoom'; step: number }
+  | { type: 'toggleFullscreen' }
+  | { type: 'findInPage'; text: string; forward: boolean; findNext: boolean }
+  | { type: 'stopFind' }
+  | { type: 'showDevTools' }
+  | { type: 'savePagePdf' }
+  | { type: 'printPage' }
+  | { type: 'copyPageLink' }
+  | { type: 'exitApp' }
+  | { type: 'toggleAppMenu' }
+  | { type: 'closeAppMenu' }
+  | { type: 'setLightTheme'; enabled: boolean }
+  | { type: 'setDnsResolver'; resolver: string }
+  | { type: 'setListEnabled'; name: string; enabled: boolean }
+  | { type: 'viewSource' }
 
 interface CefQueryRequest {
   request: string
@@ -218,6 +243,7 @@ function coerceState(value: unknown): AppState {
         thirdPartyCookies: !!parsed.privacy.thirdPartyCookies,
         siteExceptions: parsed.privacy.siteExceptions ?? [],
         lists: parsed.privacy.lists ?? [],
+        disabledLists: parsed.privacy.disabledLists ?? [],
         updating: !!parsed.privacy.updating,
         blocked: parsed.privacy.blocked ?? { total: 0 },
         tabBlockedCounts: parsed.privacy.tabBlockedCounts ?? {},
@@ -239,6 +265,13 @@ function coerceState(value: unknown): AppState {
     historyEnabled: parsed.historyEnabled ?? true,
     retentionDays: parsed.retentionDays ?? 90,
     dbNote: parsed.dbNote,
+    lightTheme: parsed.lightTheme ?? false,
+    dnsResolver: parsed.dnsResolver ?? '',
+    fullscreen: parsed.fullscreen ?? false,
+    zoomPercent: parsed.zoomPercent ?? 100,
+    findActive: parsed.findActive ?? false,
+    findCount: parsed.findCount ?? 0,
+    findActiveMatch: parsed.findActiveMatch ?? 0,
     profiles: parsed.profiles ?? [],
     permissions: parsed.permissions ?? [],
     permissionPrompt: parsed.permissionPrompt,
