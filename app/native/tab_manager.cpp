@@ -230,7 +230,7 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
         "stopFind", "showDevTools", "savePagePdf", "printPage",
         "copyPageLink", "exitApp", "setLightTheme", "toggleAppMenu",
         "closeAppMenu", "setDnsResolver", "setListEnabled", "viewSource",
-        "resizeMenuPopup", "editCommand", "createShortcut"};
+        "resizeMenuPopup", "editCommand", "createShortcut", "installPageApp"};
     if (!kAllowedRequests.count(type)) {
       callback->Failure(403, "unknown bridge request type");
       return true;
@@ -455,6 +455,8 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
       mgr_->EditCommandActive(dict->GetString("cmd").ToString());
     } else if (type == "createShortcut") {
       mgr_->CreatePageShortcut();
+    } else if (type == "installPageApp") {
+      mgr_->InstallPageApp();
     } else if (type == "resizeMenuPopup") {
       mgr_->ResizeMenuPopup(dict->GetBool("wide"), dict->GetInt("top"),
                             dict->GetInt("height"));
@@ -617,7 +619,8 @@ class TabClient : public CefClient,
                   public CefLoadHandler,
                   public CefLifeSpanHandler,
                   public CefPermissionHandler,
-                  public CefRequestHandler {
+                  public CefRequestHandler,
+                  public CefContextMenuHandler {
  public:
   TabClient(TabManager* mgr, int64_t tab_id) : mgr_(mgr), tab_id_(tab_id) {}
 
@@ -626,6 +629,9 @@ class TabClient : public CefClient,
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
+  CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override {
+    return this;
+  }
 
   bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
                                 CefRefPtr<CefFrame> frame,
@@ -782,6 +788,26 @@ class TabClient : public CefClient,
     mgr_->OnLoadingChanged(tab_id_, isLoading);
   }
 
+  // CefContextMenuHandler (Phase 8): Brave-style Arabic context menu.
+  void OnBeforeContextMenu(CefRefPtr<CefBrowser> browser,
+                           CefRefPtr<CefFrame> frame,
+                           CefRefPtr<CefContextMenuParams> params,
+                           CefRefPtr<CefMenuModel> model) override {
+    (void)frame;
+    mgr_->BuildContextMenu(browser, params, model);
+  }
+
+  bool OnContextMenuCommand(CefRefPtr<CefBrowser> browser,
+                            CefRefPtr<CefFrame> frame,
+                            CefRefPtr<CefContextMenuParams> params,
+                            int command_id,
+                            CefContextMenuHandler::EventFlags event_flags)
+      override {
+    (void)frame;
+    (void)event_flags;
+    return mgr_->HandleContextMenuCommand(browser, params, command_id);
+  }
+
   // CefLifeSpanHandler: all popups become ordinary tabs inside the tab strip.
   // The disposition parameter is declared via CefLifeSpanHandler's
   // WindowOpenDisposition typedef (same underlying enum as CefRequestHandler's).
@@ -882,6 +908,16 @@ void TabManager::Start() {
     }
   }
 
+  // Phase 8: an --app launch opens a chromeless app window: a single
+  // content browser, no toolbar UI and no session restore. A bare URL
+  // argument opens the normal window directly on that URL.
+  const bool direct_url = !launch_url_.empty();
+  if (launch_app_) {
+    CreateTab(launch_url_.empty() ? kNewTabUrl : launch_url_);
+    StartDatabase();
+    return;
+  }
+
   // Restore the persisted session (read on this thread, applied on CEF's).
   std::ifstream file(profile_store_->session_path(), std::ios::binary);
   std::string json((std::istreambuf_iterator<char>(file)),
@@ -915,7 +951,7 @@ void TabManager::Start() {
         if (!restored.empty()) quick_links_ = std::move(restored);
       }
       CefRefPtr<CefListValue> tabs = dict->GetList("tabs");
-      if (tabs && restore_session_) {
+      if (tabs && restore_session_ && !direct_url) {
         for (size_t i = 0;
              i < tabs->GetSize() && i < static_cast<size_t>(kMaxTabs); ++i) {
           CefRefPtr<CefDictionaryValue> item = tabs->GetDictionary(i);
@@ -933,7 +969,7 @@ void TabManager::Start() {
 
   // Always end up with at least one tab (empty session, or a session whose
   // stored tabs were all filtered out).
-  if (!has_session || restored_tabs == 0) {
+  if ((!has_session || restored_tabs == 0) && !direct_url) {
     CreateTab(kNewTabUrl);
   }
 
@@ -941,7 +977,8 @@ void TabManager::Start() {
   StartDatabase();
 
   // The UI browser (React toolbar) on top of the window. Tab id 0.
-  PostToCef([this]() {
+  // Skipped in --app mode: the app window is pure content.
+  if (!launch_app_) PostToCef([this]() {
     RECT rc;
     ::GetClientRect(main_hwnd_, &rc);
     const int width = rc.right - rc.left;
@@ -1253,6 +1290,12 @@ void TabManager::OnTitleChanged(int64_t tab_id, const std::wstring& title) {
       tab.title = title;
       break;
     }
+  }
+  // Phase 8: app windows carry the page title in their caption.
+  if (launch_app_ && main_hwnd_ && !title.empty()) {
+    PostToWin(main_hwnd_, [h = main_hwnd_, title]() {
+      ::SetWindowTextW(h, (title + L" — DASK").c_str());
+    });
   }
   PushUiEvent();
 }
@@ -2132,6 +2175,8 @@ void TabManager::OnMenuBrowserClosed() {
 // ---- Main menu commands (Phase 7) ------------------------------------------
 
 bool TabManager::force_private_ = false;
+bool TabManager::launch_app_ = false;
+std::wstring TabManager::launch_url_;
 
 void TabManager::NewBrowserWindow(bool private_window) {
   // A real top-level window: a second browser process sharing the same
@@ -2139,10 +2184,43 @@ void TabManager::NewBrowserWindow(bool private_window) {
   // ALL its tabs are private (no session, no history, no permission store).
   wchar_t exe[MAX_PATH] = {};
   ::GetModuleFileNameW(nullptr, exe, MAX_PATH);
-  const wchar_t* args = private_window ? L"--private" : nullptr;
-  const HINSTANCE inst =
-      ::ShellExecuteW(nullptr, L"open", exe, args, nullptr, SW_SHOWNORMAL);
-  if (reinterpret_cast<intptr_t>(inst) <= 32) {
+  const std::wstring args =
+      private_window ? L"--private" : L"";
+
+  // Launch WITHOUT inheriting this process's diagnostic environment:
+  // DASK_LOG=1 enables remote_debugging_port=9222 and a second instance
+  // cannot bind the same port (CefInitialize would fail). Build a fresh
+  // environment block that strips DASK_* debug variables.
+  std::vector<wchar_t> env_block;
+  {
+    wchar_t* strings = ::GetEnvironmentStringsW();
+    if (strings) {
+      for (wchar_t* p = strings; *p;) {
+        const std::wstring entry(p);
+        p += entry.size() + 1;
+        if (entry.rfind(L"DASK_", 0) != 0) {
+          env_block.insert(env_block.end(), entry.begin(), entry.end());
+          env_block.push_back(L'\0');
+        }
+      }
+      ::FreeEnvironmentStringsW(strings);
+      env_block.push_back(L'\0');
+    }
+  }
+
+  STARTUPINFOW si = {};
+  si.cb = sizeof(si);
+  PROCESS_INFORMATION pi = {};
+  std::wstring cmd = std::wstring(L"\"") + exe + L"\"" +
+                     (args.empty() ? L"" : L" " + args);
+  const BOOL started = ::CreateProcessW(
+      nullptr, cmd.data(), nullptr, nullptr, FALSE,
+      CREATE_UNICODE_ENVIRONMENT | NORMAL_PRIORITY_CLASS,
+      env_block.empty() ? nullptr : env_block.data(), nullptr, &si, &pi);
+  if (started) {
+    ::CloseHandle(pi.hThread);
+    ::CloseHandle(pi.hProcess);
+  } else {
     std::lock_guard<std::mutex> lock(state_mutex_);
     db_note_ = L"تعذّر فتح نافذة جديدة.";
     PushUiEvent();
@@ -2259,14 +2337,19 @@ void TabManager::PrintPage() {
 void TabManager::CopyPageLink() {
   Tab* tab = FindTab(active_tab_id_);
   if (!tab || tab->url.empty()) return;
+  CopyTextToClipboard(tab->url);
+}
+
+void TabManager::CopyTextToClipboard(const std::wstring& text) {
+  // Generic clipboard write (context-menu link/image URL copies too).
+  if (text.empty()) return;
   if (!::OpenClipboard(main_hwnd_)) return;
-  const std::wstring text = tab->url + L"\0";
-  const HGLOBAL mem = ::GlobalAlloc(GMEM_MOVEABLE,
-                                    text.size() * sizeof(wchar_t));
+  const HGLOBAL mem = ::GlobalAlloc(
+      GMEM_MOVEABLE, (text.size() + 1) * sizeof(wchar_t));
   if (mem) {
     void* dst = ::GlobalLock(mem);
     if (dst) {
-      memcpy(dst, text.c_str(), text.size() * sizeof(wchar_t));
+      memcpy(dst, text.c_str(), (text.size() + 1) * sizeof(wchar_t));
       ::GlobalUnlock(mem);
       ::EmptyClipboard();
       ::SetClipboardData(CF_UNICODETEXT, mem);
@@ -2275,6 +2358,158 @@ void TabManager::CopyPageLink() {
     }
   }
   ::CloseClipboard();
+}
+
+// ---- Brave-style Arabic context menu (Phase 8) ---------------------------
+
+namespace {
+// Custom context-menu command ids (kept far from CEF's built-in range).
+constexpr int kCtxOpenLinkTab = 4001;
+constexpr int kCtxCopyLink = 4002;
+constexpr int kCtxSaveLink = 4003;
+constexpr int kCtxOpenImageTab = 4004;
+constexpr int kCtxSaveImage = 4005;
+constexpr int kCtxCopyImage = 4006;
+constexpr int kCtxCut = 4007;
+constexpr int kCtxCopy = 4008;
+constexpr int kCtxPaste = 4009;
+constexpr int kCtxBack = 4010;
+constexpr int kCtxForward = 4011;
+constexpr int kCtxReload = 4012;
+constexpr int kCtxSavePdf = 4013;
+constexpr int kCtxPrint = 4014;
+constexpr int kCtxFind = 4015;
+constexpr int kCtxViewSource = 4016;
+constexpr int kCtxInspect = 4017;
+
+// Delivers a Ctrl+<key> editing keystroke into the given browser (the menu
+// target browser keeps focus, so the renderer's editing pipeline applies).
+void SendEditKey(CefRefPtr<CefBrowser> browser, wchar_t key) {
+  if (!browser) return;
+  CefKeyEvent raw_down;
+  raw_down.type = KEYEVENT_RAWKEYDOWN;
+  raw_down.windows_key_code = key;
+  raw_down.modifiers = EVENTFLAG_CONTROL_DOWN;
+  browser->GetHost()->SendKeyEvent(raw_down);
+  CefKeyEvent ch = raw_down;
+  ch.type = KEYEVENT_CHAR;
+  ch.character = key;
+  browser->GetHost()->SendKeyEvent(ch);
+  CefKeyEvent up = raw_down;
+  up.type = KEYEVENT_KEYUP;
+  browser->GetHost()->SendKeyEvent(up);
+}
+
+}  // namespace
+
+void TabManager::BuildContextMenu(CefRefPtr<CefBrowser> browser,
+                                  CefRefPtr<CefContextMenuParams> params,
+                                  CefRefPtr<CefMenuModel> model) {
+  // Replace Chromium's default items entirely — our own Brave-style menu.
+  model->Clear();
+  const bool has_link = !params->GetLinkUrl().empty();
+  const bool has_selection = !params->GetSelectionText().empty();
+  const bool editable = params->IsEditable();
+  const bool image = params->GetMediaType() == CM_MEDIATYPE_IMAGE;
+
+  if (has_link) {
+    model->AddItem(kCtxOpenLinkTab, L"فتح الرابط في تبويب جديد");
+    model->AddItem(kCtxCopyLink, L"نسخ عنوان الرابط");
+    model->AddItem(kCtxSaveLink, L"حفظ الرابط باسم…");
+    model->AddSeparator();
+  }
+  if (image) {
+    model->AddItem(kCtxOpenImageTab, L"فتح الصورة في تبويب جديد");
+    model->AddItem(kCtxSaveImage, L"حفظ الصورة باسم…");
+    model->AddItem(kCtxCopyImage, L"نسخ عنوان الصورة");
+    model->AddSeparator();
+  }
+  if (editable) {
+    model->AddItem(kCtxCut, L"قص");
+    model->SetAccelerator(kCtxCut, 'X', false, true, false);
+    model->AddItem(kCtxCopy, L"نسخ");
+    model->SetAccelerator(kCtxCopy, 'C', false, true, false);
+    model->AddItem(kCtxPaste, L"لصق");
+    model->SetAccelerator(kCtxPaste, 'V', false, true, false);
+    model->AddSeparator();
+  } else if (has_selection) {
+    model->AddItem(kCtxCopy, L"نسخ");
+    model->SetAccelerator(kCtxCopy, 'C', false, true, false);
+    model->AddSeparator();
+  }
+  if (browser->CanGoBack()) model->AddItem(kCtxBack, L"للخلف");
+  if (browser->CanGoForward()) model->AddItem(kCtxForward, L"للأمام");
+  if (browser->CanGoBack() || browser->CanGoForward()) model->AddSeparator();
+  model->AddItem(kCtxReload, L"إعادة التحميل");
+  model->AddItem(kCtxSavePdf, L"حفظ الصفحة باسم… (PDF)");
+  model->AddItem(kCtxPrint, L"طباعة");
+  model->AddItem(kCtxFind, L"بحث في الصفحة");
+  model->AddSeparator();
+  model->AddItem(kCtxViewSource, L"عرض المصدر");
+  model->AddItem(kCtxInspect, L"فحص العنصر");
+}
+
+bool TabManager::HandleContextMenuCommand(
+    CefRefPtr<CefBrowser> browser, CefRefPtr<CefContextMenuParams> params,
+    int command_id) {
+  switch (command_id) {
+    case kCtxOpenLinkTab:
+      CreateTab(params->GetLinkUrl());
+      return true;
+    case kCtxCopyLink:
+      CopyTextToClipboard(params->GetLinkUrl().ToWString());
+      return true;
+    case kCtxSaveLink:
+      browser->GetHost()->StartDownload(params->GetLinkUrl());
+      return true;
+    case kCtxOpenImageTab:
+      CreateTab(params->GetSourceUrl());
+      return true;
+    case kCtxSaveImage:
+      browser->GetHost()->StartDownload(params->GetSourceUrl());
+      return true;
+    case kCtxCopyImage:
+      CopyTextToClipboard(params->GetSourceUrl().ToWString());
+      return true;
+    case kCtxCut:
+      SendEditKey(browser, L'X');
+      return true;
+    case kCtxCopy:
+      SendEditKey(browser, L'C');
+      return true;
+    case kCtxPaste:
+      SendEditKey(browser, L'V');
+      return true;
+    case kCtxBack:
+      browser->GoBack();
+      return true;
+    case kCtxForward:
+      browser->GoForward();
+      return true;
+    case kCtxReload:
+      browser->Reload();
+      return true;
+    case kCtxSavePdf:
+      SavePageAsPdf();
+      return true;
+    case kCtxPrint:
+      PrintPage();
+      return true;
+    case kCtxFind:
+      OpenFindBar();
+      return true;
+    case kCtxViewSource: {
+      const std::wstring url =
+          browser->GetMainFrame()->GetURL().ToWString();
+      if (!url.empty()) CreateTab(L"view-source:" + url);
+      return true;
+    }
+    case kCtxInspect:
+      ShowDevTools();
+      return true;
+    default:
+      return false;
+  }
 }
 
 void TabManager::ExitApp() {
@@ -2293,6 +2528,20 @@ std::string TabManager::ReadPrefString(const std::string& key) {
   storage::Settings prefs(&db);
   std::string value;
   if (!prefs.GetString(key, "", &value, &err)) value.clear();
+  return value;
+}
+
+bool TabManager::ReadPrefBool(const std::string& key) {
+  // Synchronous read used before the DB thread starts (browser startup).
+  ProfileStore store(AppDataDir());
+  storage::Database db;
+  std::string err;
+  if (!db.Open(Utf8FromWide(store.db_path()), &err) || !db.Migrate(&err)) {
+    return false;
+  }
+  storage::Settings prefs(&db);
+  bool value = false;
+  prefs.GetBool(key, false, &value, &err);
   return value;
 }
 
@@ -2352,9 +2601,59 @@ void TabManager::EditCommandActive(const std::string& cmd) {
   });
 }
 
+// ---- Launcher shortcuts (.lnk) -------------------------------------------
+
+namespace {
+
+// Writes a real .lnk shell shortcut pointing at dask_browser.exe with the
+// given arguments, so it ALWAYS opens in DASK (a .url Internet shortcut
+// would be opened by the system default browser instead).
+bool WriteLauncherShortcut(const std::wstring& dir, std::wstring name,
+                           const std::wstring& url,
+                           const std::wstring& args) {
+  wchar_t exe[MAX_PATH] = {};
+  ::GetModuleFileNameW(nullptr, exe, MAX_PATH);
+  for (wchar_t& c : name) {
+    if (c == L'\\' || c == L'/' || c == L':' || c == L'*' || c == L'?' ||
+        c == L'"' || c == L'<' || c == L'>' || c == L'|') {
+      c = L'_';
+    }
+  }
+  const size_t budget = MAX_PATH - dir.size() - 12;
+  if (name.size() > budget) name.resize(budget);
+  std::wstring base = dir + L"\\" + name;
+  std::wstring path = base + L".lnk";
+  for (int i = 2;
+       ::GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES; ++i) {
+    path = base + L" (" + std::to_wstring(i) + L").lnk";
+  }
+  // COM may already be initialized (MTA) on CEF's UI thread.
+  const HRESULT coinited = ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  const bool com_here = SUCCEEDED(coinited);
+  bool ok = false;
+  IShellLinkW* link = nullptr;
+  if (SUCCEEDED(::CoCreateInstance(CLSID_ShellLink, nullptr,
+                                   CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link)))) {
+    link->SetPath(exe);
+    link->SetArguments(args.c_str());
+    link->SetIconLocation(exe, 0);
+    link->SetDescription((L"DASK Browser — " + url).c_str());
+    IPersistFile* pf = nullptr;
+    if (SUCCEEDED(link->QueryInterface(IID_PPV_ARGS(&pf)))) {
+      ok = SUCCEEDED(pf->Save(path.c_str(), TRUE));
+      pf->Release();
+    }
+    link->Release();
+  }
+  if (com_here) ::CoUninitialize();
+  return ok;
+}
+
+}  // namespace
+
 void TabManager::CreatePageShortcut() {
-  // Phase 7.5: "Create shortcut" — write a .url Internet shortcut for the
-  // active page onto the user's Desktop (standard shell format).
+  // "Create shortcut" — a launcher .lnk on the Desktop opening the page in
+  // a normal DASK window.
   PostToCef([this]() {
     Tab* tab = FindTab(active_tab_id_);
     if (!tab || tab->internal || tab->url.empty()) return;
@@ -2363,25 +2662,41 @@ void TabManager::CreatePageShortcut() {
                                   0, desktop))) {
       return;
     }
-    std::wstring name = tab->title.empty() ? L"صفحة" : tab->title;
-    for (wchar_t& c : name) {
-      if (c == L'\\' || c == L'/' || c == L':' || c == L'*' || c == L'?' ||
-          c == L'"' || c == L'<' || c == L'>' || c == L'|') {
-        c = L'_';
+    const std::wstring name =
+        tab->title.empty() ? L"صفحة" : tab->title;
+    WriteLauncherShortcut(desktop, name, tab->url,
+                          L"\"" + tab->url + L"\"");
+  });
+}
+
+void TabManager::InstallPageApp() {
+  // "Install page as app" — a launcher .lnk in the Start menu's Programs
+  // folder with --app <url>: it shows up in Start-menu search like an
+  // installed app and opens DASK's own chromeless app window.
+  PostToCef([this]() {
+    Tab* tab = FindTab(active_tab_id_);
+    if (!tab || tab->internal || tab->url.empty()) return;
+    wchar_t programs[MAX_PATH] = {};
+    if (FAILED(::SHGetFolderPathW(nullptr, CSIDL_PROGRAMS, nullptr, 0,
+                                  programs))) {
+      return;
+    }
+    // Name the "app" after the site host (stable across pages) falling
+    // back to the page title.
+    std::wstring name;
+    CefURLParts parts;
+    if (CefParseURL(tab->url, parts) && parts.host.length > 0) {
+      name = CefString(&parts.host).ToWString();
+      // Strip common prefixes for a cleaner name (example.com).
+      for (const wchar_t* pfx : {L"www."}) {
+        if (name.rfind(pfx, 0) == 0) name = name.substr(wcslen(pfx));
       }
     }
-    // Trim so the full path stays within MAX_PATH.
-    const size_t budget = MAX_PATH - wcslen(desktop) - 12;
-    if (name.size() > budget) name.resize(budget);
-    std::wstring base = std::wstring(desktop) + L"\\" + name;
-    std::wstring path = base + L".url";
-    for (int i = 2; ::GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
-         ++i) {
-      path = base + L" (" + std::to_wstring(i) + L").url";
+    if (name.empty()) {
+      name = tab->title.empty() ? L"تطبيق" : tab->title;
     }
-    std::ofstream f(path, std::ios::binary);
-    if (!f) return;
-    f << "[InternetShortcut]\r\nURL=" << WstrToUtf8(tab->url) << "\r\n";
+    WriteLauncherShortcut(programs, name, tab->url,
+                          L"--app \"" + tab->url + L"\"");
   });
 }
 

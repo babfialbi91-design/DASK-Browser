@@ -3,11 +3,17 @@
 // lives in TabManager on the CEF UI thread (see tab_manager.h).
 #include "browser_window.h"
 
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
+#include <shellapi.h>
+#include <shlobj.h>
 
 #include <cstdint>
+#include <fstream>
 #include <map>
 #include <string>
+#include <vector>
 
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
@@ -24,6 +30,18 @@ constexpr wchar_t kHostClassName[] = L"DaskTabHost";
 constexpr wchar_t kMenuPopupClassName[] = L"DaskMenuPopup";
 constexpr int kInitialWidth = 1280;
 constexpr int kInitialHeight = 800;
+
+// UTF-8 helper for the init-failure diagnostic file.
+std::string NarrowUtf8(const std::wstring& w) {
+  const int n = ::WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(),
+                                      nullptr, 0, nullptr, nullptr);
+  std::string out(n, 0);
+  if (n) {
+    ::WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), out.data(), n,
+                          nullptr, nullptr);
+  }
+  return out;
+}
 
 // Win32-thread-only bookkeeping.
 std::map<int64_t, HWND> g_hosts;  // tab id -> host window (0 = UI toolbar)
@@ -62,8 +80,10 @@ void DoLayout() {
   if (!::GetClientRect(g_main_hwnd, &rc)) return;
   const int width = rc.right - rc.left;
   const int height = rc.bottom - rc.top;
-  const int content_y = kUiToolbarHeight;
-  const int content_h = height - kUiToolbarHeight;
+  // Phase 8: app windows (--app) are pure content — no toolbar strip.
+  const bool app_mode = TabManager::launch_app();
+  const int content_y = app_mode ? 0 : kUiToolbarHeight;
+  const int content_h = height - content_y;
 
   std::vector<int64_t> order;
   int64_t active_id = 0;
@@ -400,6 +420,31 @@ int RunBrowserWindow(HINSTANCE h_instance, int n_cmd_show) {
     TabManager::SetForcePrivate(true);
   }
 
+  // Phase 8: --app <url> opens a chromeless app window (the installed
+  // "page as app" shortcuts use it); a bare http(s) URL argument opens the
+  // normal window directly on that URL (the "create shortcut" launchers).
+  bool launch_app = false;
+  std::wstring launch_url;
+  {
+    int argc = 0;
+    LPWSTR* argv =
+        ::CommandLineToArgvW(cmdline ? cmdline : L"", &argc);
+    if (argv) {
+      for (int i = 1; i < argc; ++i) {
+        const std::wstring arg = argv[i];
+        if (arg == L"--app" && i + 1 < argc) {
+          launch_app = true;
+          launch_url = argv[++i];
+        } else if (arg.rfind(L"http://", 0) == 0 ||
+                   arg.rfind(L"https://", 0) == 0) {
+          launch_url = arg;
+        }
+      }
+      ::LocalFree(argv);
+    }
+  }
+  TabManager::SetLaunch(launch_app, launch_url);
+
   if (!CefRuntimeFilesPresent(exe_dir)) {
     ShowFatalError(
         L"DASK Browser",
@@ -421,6 +466,20 @@ int RunBrowserWindow(HINSTANCE h_instance, int n_cmd_show) {
   CefString(&settings.locales_dir_path).FromWString(exe_dir + L"\\locales");
   // cache_path left empty: no profile data is stored (no passwords, history).
   settings.multi_threaded_message_loop = true;  // CEF runs its own loop thread.
+  // Phase 8: CEF 120+ enforces a process singleton lock on root_cache_path
+  // (an empty value falls back to the SHARED default dir, so a second DASK
+  // window process would fail CefInitialize — the "CefInitialize() failed."
+  // dialog). Give every window process its own root; the shared user data
+  // lives in the per-profile request contexts (profiles/<id>/cef_cache).
+  {
+    wchar_t appdata[MAX_PATH] = {};
+    if (SUCCEEDED(::SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0,
+                                     appdata))) {
+      CefString(&settings.root_cache_path)
+          .FromWString(std::wstring(appdata) + L"\\DaskBrowser\\cef_root\\p" +
+                       std::to_wstring(::GetCurrentProcessId()));
+    }
+  }
   // Phase 6: diagnostic logging is OFF by default (no personal data is ever
   // written). Enable only for troubleshooting with DASK_LOG=1: CEF's own
   // log goes to <exe dir>\debug.log (rotated by CEF; inspect locally only).
@@ -428,14 +487,48 @@ int RunBrowserWindow(HINSTANCE h_instance, int n_cmd_show) {
   if (::GetEnvironmentVariableW(L"DASK_LOG", log_env, 8) && log_env[0] == L'1') {
     CefString(&settings.log_file).FromWString(exe_dir + L"\\debug.log");
     settings.log_severity = LOGSEVERITY_WARNING;
-    settings.remote_debugging_port = 9222;  // for perf probes (debug only)
+    // Debug only. A second DASK instance must NOT fail CefInitialize when
+    // the first one already owns the port: probe before enabling DevTools.
+    WSADATA wsa = {};
+    bool port_free = false;
+    if (::WSAStartup(MAKEWORD(2, 2), &wsa) == 0) {
+      SOCKET probe = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+      if (probe != INVALID_SOCKET) {
+        SOCKADDR_IN addr = {};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = ::htonl(INADDR_LOOPBACK);
+        addr.sin_port = ::htons(9222);
+        port_free =
+            ::bind(probe, reinterpret_cast<SOCKADDR*>(&addr), sizeof(addr)) == 0;
+        ::closesocket(probe);
+      }
+    }
+    if (port_free) settings.remote_debugging_port = 9222;
   } else {
     settings.log_severity = LOGSEVERITY_DISABLE;
   }
+  // Phase 8: dark native UI (context menus, dialogs) unless the light
+  // theme is chosen. Applied through DaskApp::OnBeforeCommandLineProcessing
+  // (the documented place to adjust switches before CefInitialize).
+  SetForceDarkUI(!TabManager::ReadPrefBool("lightTheme"));
+  // Arabic Chromium UI (context-menu accelerators, print dialogs, …).
+  CefString(&settings.locale).FromString("ar");
   CefMainArgs main_args(h_instance);
   // The browser process installs the http://dask.ui UI handler.
   CefRefPtr<CefApp> app = CreateDaskApp(exe_dir + L"\\ui");
   if (!CefInitialize(main_args, settings, app, nullptr)) {
+    // One-line local diagnostic (no personal data): which debug flags were
+    // active when initialization failed. Overwritten on every failure.
+    const int exit_code = CefGetExitCode();
+    std::ofstream why(exe_dir + L"\\init_fail.txt", std::ios::binary);
+    if (why) {
+      why << "CefInitialize failed; DASK_LOG='" << NarrowUtf8(log_env)
+          << "'; app_mode=" << (launch_app ? 1 : 0)
+          << "; locale=ar; force-dark="
+          << (TabManager::ReadPrefBool("lightTheme") ? 0 : 1)
+          << "; launch_url_len=" << launch_url.size()
+          << "; exit_code=" << exit_code << std::endl;
+    }
     ShowFatalError(L"DASK Browser", L"CefInitialize() failed.");
     return 1;
   }

@@ -6,6 +6,10 @@ import { menuIcons } from './menuIcons'
 
 export function buildMenuRows(ctx: MenuContext): MenuRow[] {
   const { go, close } = ctx
+  // Context-dependent items: "install page as app" exists only while a
+  // real web page is open (not on internal/new-tab pages).
+  const tab = ctx.state.tabs.find((t) => t.id === ctx.state.activeTabId)
+  const siteOpen = !!tab && !tab.internal && /^https?:\/\//.test(tab.url)
 
   return [
     // ---- Group 1: windows and tabs ----
@@ -56,6 +60,11 @@ export function buildMenuRows(ctx: MenuContext): MenuRow[] {
       { kind: 'header', label: 'حفظ' },
       { kind: 'item', label: 'حفظ الصفحة باسم… (PDF)', icon: menuIcons.fileText,
         run: () => go({ type: 'savePagePdf' }) },
+      ...(siteOpen
+        ? [{ kind: 'item' as const, label: 'تثبيت الصفحة كتطبيق…',
+            icon: menuIcons.monitor,
+            run: () => go({ type: 'installPageApp' }) }]
+        : []),
       { kind: 'item', label: 'إنشاء اختصار…', icon: menuIcons.monitor,
         run: () => go({ type: 'createShortcut' }) },
       { kind: 'header', label: 'مشاركة' },

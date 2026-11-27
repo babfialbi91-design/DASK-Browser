@@ -28,6 +28,7 @@
 #include "filter_lists.h"
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
+#include "include/cef_context_menu_handler.h"
 #include "include/cef_client.h"
 #include "include/cef_download_handler.h"
 #include "include/cef_find_handler.h"
@@ -169,6 +170,15 @@ class TabManager {
   void ViewSourceActive();  // Phase 7.5: Ctrl+U / menu
   void EditCommandActive(const std::string& cmd);  // Phase 7.5: cut/copy/paste
   void CreatePageShortcut();  // Phase 7.5: .url shortcut on the Desktop
+  void InstallPageApp();      // Phase 7.5: .url "app" in the Start menu
+
+  // Phase 8: Brave-style Arabic context menu (CefContextMenuHandler).
+  void BuildContextMenu(CefRefPtr<CefBrowser> browser,
+                        CefRefPtr<CefContextMenuParams> params,
+                        CefRefPtr<CefMenuModel> model);
+  bool HandleContextMenuCommand(CefRefPtr<CefBrowser> browser,
+                                CefRefPtr<CefContextMenuParams> params,
+                                int command_id);
   const std::string& dns_resolver() const { return dns_resolver_; }
 
   // ---- Main menu commands (Phase 7) ----
@@ -177,6 +187,16 @@ class TabManager {
   // thread). Returns "" when unset.
   static std::string ReadPrefString(const std::string& key);
   static bool force_private() { return force_private_; }
+
+  // Phase 8: launch configuration parsed from the command line before CEF
+  // initialization: --app <url> opens a chromeless app window; a bare
+  // http(s) URL opens a normal window directly on that URL.
+  static void SetLaunch(bool app_mode, const std::wstring& url) {
+    launch_app_ = app_mode;
+    launch_url_ = url;
+  }
+  static bool launch_app() { return launch_app_; }
+  static bool ReadPrefBool(const std::string& key);
   void NewBrowserWindow(bool private_window);  // second process (real window)
   void AdjustZoom(double step);  // +/- zoom on the active page; 0 = reset
   void ToggleFullscreen();       // native borderless fullscreen of the window
@@ -188,6 +208,7 @@ class TabManager {
   void SavePageAsPdf();          // PrintToPDF into the Downloads folder
   void PrintPage();              // window.print() in the active frame
   void CopyPageLink();           // active tab URL to the clipboard
+  void CopyTextToClipboard(const std::wstring& text);  // generic helper
   void ExitApp();                // safe close: WM_CLOSE on the main window
   void ShowAppMenu();            // Phase 7: open the popup menu window
   void CloseAppMenu();           // Phase 7: close it (deactivate/toggle)
@@ -362,6 +383,8 @@ class TabManager {
   int find_count_ = 0;        // last find result count
   int find_active_match_ = 0; // 1-based active match index
   static bool force_private_; // Phase 7: --private second-window process
+  static bool launch_app_;    // Phase 8: --app <url> chromeless window
+  static std::wstring launch_url_;  // Phase 8: --app / bare-URL launch target
   bool light_theme_ = false;  // Phase 7: UI theme (false = dark, default)
   std::string dns_resolver_;  // Phase 7.5: DoH provider (empty = system default)
 

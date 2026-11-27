@@ -85,7 +85,7 @@ target_link_libraries(dask_browser PRIVATE
     dask_storage
     libcef_lib
     libcef_dll_wrapper
-    d3d11 dxgi dxguid)
+    d3d11 dxgi dxguid ws2_32)
 dask_finalize_target(dask_browser)
 
 # CEF subprocess executable (renderer / gpu / utility processes).

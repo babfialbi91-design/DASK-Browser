@@ -17,6 +17,11 @@ void OnBeforeCommandLineProcessing(const CefString& process_type,
 // before CefInitialize. Applied via Chromium network-service switches.
 void SetDoHResolver(const std::string& resolver);
 
+// Phase 8: dark native UI (context menus, dialogs) unless the light theme
+// is chosen. Set by the browser process before CefInitialize; applied via
+// OnBeforeCommandLineProcessing (the documented place to modify switches).
+void SetForceDarkUI(bool enabled);
+
 // Creates the shared CefApp instance used by every process type. When
 // |ui_dir| is provided, the "dask://" scheme handler factory serving the
 // React bundle is registered after context initialization (browser process

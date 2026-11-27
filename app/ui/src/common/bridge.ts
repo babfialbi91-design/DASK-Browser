@@ -178,6 +178,7 @@ export type Request =
   | { type: 'viewSource' }
   | { type: 'editCommand'; cmd: 'cut' | 'copy' | 'paste' }
   | { type: 'createShortcut' }
+  | { type: 'installPageApp' }
   | { type: 'resizeMenuPopup'; wide: boolean; top?: number; height?: number }
 
 interface CefQueryRequest {

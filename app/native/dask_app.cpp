@@ -11,10 +11,13 @@ namespace dask {
 namespace {
 
 std::string g_doh_resolver;  // set before CefInitialize (browser process)
+bool g_force_dark_ui = false;
 
 }  // namespace
 
 void SetDoHResolver(const std::string& resolver) { g_doh_resolver = resolver; }
+
+void SetForceDarkUI(bool enabled) { g_force_dark_ui = enabled; }
 
 void OnBeforeCommandLineProcessing(const CefString& process_type,
                                    CefRefPtr<CefCommandLine> command_line) {
@@ -22,13 +25,17 @@ void OnBeforeCommandLineProcessing(const CefString& process_type,
   // Chromium network-service switches on the next launch (the network
   // service cannot re-read them while running). Empty value = system DNS.
   (void)process_type;
-  if (g_doh_resolver.empty() ||
-      command_line->HasSwitch("dns-over-https-resolvers")) {
-    return;
+  if (!g_doh_resolver.empty() &&
+      !command_line->HasSwitch("dns-over-https-resolvers")) {
+    command_line->AppendSwitchWithValue(
+        "dns-over-https-resolvers", g_doh_resolver);
+    command_line->AppendSwitchWithValue("enable-features", "DnsOverHttps");
   }
-  command_line->AppendSwitchWithValue(
-      "dns-over-https-resolvers", g_doh_resolver);
-  command_line->AppendSwitchWithValue("enable-features", "DnsOverHttps");
+  // Phase 8: dark Chromium UI (context menus, dialogs) when the DASK theme
+  // is dark. Chromium views follow the native theme.
+  if (g_force_dark_ui && !command_line->HasSwitch("force-dark-mode")) {
+    command_line->AppendSwitch("force-dark-mode");
+  }
 }
 
 namespace {
