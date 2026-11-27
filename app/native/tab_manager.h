@@ -167,6 +167,8 @@ class TabManager {
   void SetDnsResolver(const std::string& resolver);  // Phase 7.5 (applies next launch)
   void SetListEnabled(const std::string& name, bool enabled);  // Phase 7.5
   void ViewSourceActive();  // Phase 7.5: Ctrl+U / menu
+  void EditCommandActive(const std::string& cmd);  // Phase 7.5: cut/copy/paste
+  void CreatePageShortcut();  // Phase 7.5: .url shortcut on the Desktop
   const std::string& dns_resolver() const { return dns_resolver_; }
 
   // ---- Main menu commands (Phase 7) ----

@@ -181,6 +181,100 @@ export const menuIcons = {
       <circle cx="12" cy="7.5" r="0.6" fill="currentColor" />
     </Svg>
   ),
+  scissors: ({ size }: IconProps) => (
+    <Svg size={size}>
+      <circle cx="6" cy="6" r="2.6" />
+      <circle cx="6" cy="18" r="2.6" />
+      <line x1="20" y1="4" x2="8.1" y2="15.9" />
+      <line x1="14.5" y1="10.5" x2="20" y2="20" />
+      <line x1="8.1" y1="8.1" x2="12" y2="12" />
+    </Svg>
+  ),
+  copy: ({ size }: IconProps) => (
+    <Svg size={size}>
+      <rect x="9" y="9" width="12" height="12" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </Svg>
+  ),
+  clipboard: ({ size }: IconProps) => (
+    <Svg size={size}>
+      <rect x="6" y="4" width="12" height="17" rx="2" />
+      <path d="M9 4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2" />
+      <line x1="9" y1="10" x2="15" y2="10" />
+      <line x1="9" y1="14" x2="15" y2="14" />
+    </Svg>
+  ),
+  userPlus: ({ size }: IconProps) => (
+    <Svg size={size}>
+      <circle cx="9" cy="8" r="3.5" />
+      <path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" />
+      <line x1="18" y1="8" x2="18" y2="14" />
+      <line x1="15" y1="11" x2="21" y2="11" />
+    </Svg>
+  ),
+  guest: ({ size }: IconProps) => (
+    <Svg size={size}>
+      <circle cx="12" cy="8" r="3.5" />
+      <path d="M5 20c0-3.3 3.1-6 7-6s7 2.7 7 6" />
+      <line x1="12" y1="2" x2="12" y2="4.5" />
+    </Svg>
+  ),
+  sync: ({ size }: IconProps) => (
+    <Svg size={size}>
+      <path d="M21 12a9 9 0 0 1-15.5 6.2L3 16" />
+      <path d="M3 12a9 9 0 0 1 15.5-6.2L21 8" />
+      <path d="M21 4v4h-4" />
+      <path d="M3 20v-4h4" />
+    </Svg>
+  ),
+  tabSearch: ({ size }: IconProps) => (
+    <Svg size={size}>
+      <rect x="3" y="4" width="18" height="14" rx="2" />
+      <circle cx="10.5" cy="11" r="2.6" />
+      <line x1="12.7" y1="13.2" x2="15" y2="15.5" />
+    </Svg>
+  ),
+  taskManager: ({ size }: IconProps) => (
+    <Svg size={size}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <polyline points="7,14 10,10 13,13 17,8" />
+    </Svg>
+  ),
+  monitor: ({ size }: IconProps) => (
+    <Svg size={size}>
+      <rect x="3" y="4" width="18" height="12" rx="2" />
+      <line x1="8" y1="20" x2="16" y2="20" />
+      <line x1="12" y1="16" x2="12" y2="20" />
+    </Svg>
+  ),
+  qrCode: ({ size }: IconProps) => (
+    <Svg size={size}>
+      <rect x="3" y="3" width="7" height="7" />
+      <rect x="14" y="3" width="7" height="7" />
+      <rect x="3" y="14" width="7" height="7" />
+      <line x1="14" y1="14" x2="14" y2="17" />
+      <line x1="17" y1="14" x2="21" y2="14" />
+      <line x1="21" y1="17" x2="21" y2="21" />
+      <line x1="14" y1="21" x2="17" y2="21" />
+    </Svg>
+  ),
+  lifeBuoy: ({ size }: IconProps) => (
+    <Svg size={size}>
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="12" cy="12" r="3.5" />
+      <line x1="5.7" y1="5.7" x2="9.5" y2="9.5" />
+      <line x1="14.5" y1="14.5" x2="18.3" y2="18.3" />
+      <line x1="18.3" y1="5.7" x2="14.5" y2="9.5" />
+      <line x1="9.5" y1="14.5" x2="5.7" y2="18.3" />
+    </Svg>
+  ),
+  alertTriangle: ({ size }: IconProps) => (
+    <Svg size={size}>
+      <path d="M12 3l10 17H2z" />
+      <line x1="12" y1="10" x2="12" y2="14" />
+      <circle cx="12" cy="17" r="0.6" fill="currentColor" />
+    </Svg>
+  ),
 }
 
 export type MenuIconComponent = (props: IconProps) => ReactNode

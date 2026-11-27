@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<title>مركز المساعدة — DASK Browser</title>
+<style>
+  :root {
+    --bg: #16181f;
+    --panel: #1e2027;
+    --panel-raised: #262933;
+    --border: #333642;
+    --text: #e8eaf0;
+    --muted: #9aa0ad;
+    --accent: #8b5cf6;
+    --accent-soft: rgba(139, 92, 246, 0.18);
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', Tahoma, sans-serif;
+    font-size: 14px;
+    line-height: 1.7;
+  }
+  header {
+    padding: 28px 32px 18px;
+    border-bottom: 1px solid var(--border);
+    background:
+      radial-gradient(700px 300px at 85% -20%, rgba(139, 92, 246, 0.22), transparent 60%),
+      radial-gradient(500px 250px at 10% 120%, rgba(59, 130, 246, 0.14), transparent 60%),
+      var(--bg);
+  }
+  h1 { margin: 0; font-size: 22px; }
+  header p { margin: 6px 0 0; color: var(--muted); }
+  main { max-width: 780px; margin: 0 auto; padding: 24px 32px 64px; }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    margin-bottom: 16px;
+  }
+  h2 {
+    margin: 0 0 10px;
+    font-size: 15px;
+    color: var(--accent);
+  }
+  p, li { color: var(--text); }
+  ul { margin: 6px 0; padding-inline-start: 20px; }
+  kbd {
+    display: inline-block;
+    min-width: 22px;
+    text-align: center;
+    padding: 1px 7px;
+    border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    border-radius: 6px;
+    background: var(--panel-raised);
+    font-family: inherit;
+    font-size: 12px;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  tr:last-child td { border-bottom: none; }
+  td:first-child { color: var(--muted); }
+  .tip {
+    background: var(--accent-soft);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    margin-top: 10px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>مركز المساعدة</h1>
+  <p>كل ما تحتاج معرفته لاستخدام DASK Browser — الإصدار 1.1.0</p>
+</header>
+<main>
+
+<section>
+  <h2>التبويبات</h2>
+  <ul>
+    <li>افتح تبويباً جديداً بزر <kbd>+</kbd> في شريط التبويبات أو <kbd>Ctrl</kbd>+<kbd>T</kbd>، وأغلقه بـ <kbd>Ctrl</kbd>+<kbd>W</kbd>.</li>
+    <li>تنقل بين التبويبات بـ <kbd>Ctrl</kbd>+<kbd>Tab</kbd>، وتستعيد تبويباً مغلقاً بـ <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> عند بدء جلسة جديدة.</li>
+    <li>شريط العنوان الذكي: اكتب رابطاً لفتحه مباشرة أو كلمات للبحث في محركك المفضل (يتغير من صفحة التبويب الجديد).</li>
+  </ul>
+</section>
+
+<section>
+  <h2>الخصوصية وحجب الإعلانات</h2>
+  <ul>
+    <li>الحجب يعمل افتراضياً بقوائم EasyList وEasyPrivacy وقائمة التصيّد، ويُحدَّث تلقائياً.</li>
+    <li>من الإعدادات ← الخصوصية: تعطيل/تفعيل كل قائمة على حدة، منع كوكيز الطرف الثالث، وإدارة استثناءات المواقع (سماح دائم لموقع تحبه).</li>
+    <li>حذف بيانات التصفح بـ <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Delete</kbd> أو من القائمة الرئيسية.</li>
+    <li>إن كان أحد مواقعك معطّلاً بسبب الحجب: القائمة ← مساعدة ← الإبلاغ عن موقع معطّل، ثم أضف استثناءً للموقع.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>المفضلة والسجل والتنزيلات</h2>
+  <ul>
+    <li>أضف الصفحة الحالية للمفضلة بزر النجمة أو <kbd>Ctrl</kbd>+<kbd>D</kbd>، وعدّل الأسماء وابحث فيها من الإعدادات ← المفضلة.</li>
+    <li>السجل كامل مع بحث ومسح انتقائي، ويمكن تعطيله تماماً من الإعدادات.</li>
+    <li>التنزيلات في مجلد التنزيلات الافتراضي، والملفات الخطرة تطلب تأكيداً صريحاً قبل فتحها.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>الملفات الشخصية والنوافذ</h2>
+  <ul>
+    <li>أنشئ ملفات شخصية متعددة من الإعدادات ← الملفات الشخصية؛ كل ملف له قاعدة بيانات وجلسة وخصوصية معزولة تماماً.</li>
+    <li>النافذة الخاصة (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd>) أو «ملف الضيف» من أدوات إضافية: تصفح بلا أثر في الجلسة أو السجل.</li>
+  </ul>
+</section>
+
+<section id="shortcuts">
+  <h2>اختصارات لوحة المفاتيح</h2>
+  <table>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>L</kbd></td><td>التركيز على شريط العنوان</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>T</kbd> / <kbd>Ctrl</kbd>+<kbd>W</kbd></td><td>تبويب جديد / إغلاق التبويب</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Tab</kbd></td><td>التبويب التالي</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>R</kbd></td><td>إعادة تحميل</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>→</kbd> / <kbd>Alt</kbd>+<kbd>←</kbd></td><td>للأمام / للخلف</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>D</kbd></td><td>إضافة/إزالة من المفضلة</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>F</kbd></td><td>بحث في الصفحة</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>X</kbd> / <kbd>C</kbd> / <kbd>V</kbd></td><td>قص / نسخ / لصق في الصفحة</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>P</kbd></td><td>طباعة</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>U</kbd></td><td>عرض مصدر الصفحة</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>J</kbd></td><td>التنزيلات</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd></td><td>أدوات المطور</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd></td><td>نافذة خاصة</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Delete</kbd></td><td>حذف بيانات التصفح</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>إغلاق القائمة الرئيسية</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>أسئلة شائعة</h2>
+  <ul>
+    <li><strong>لا تُحفظ كلمات المرور عمداً</strong> — DASK متصفح بسيط يركز على الخصوصية، بلا تخزين كلمات مرور أو تتبع.</li>
+    <li><strong>بياناتي أين؟</strong> كل شيء محلي في <code>%LOCALAPPDATA%\DaskBrowser</code> — لا telemetry ولا إرسال بيانات.</li>
+    <li><strong>موقع لا يعمل مع الحجب؟</strong> أضف استثناء من الإعدادات ← الخصوصية ← استثناءات المواقع.</li>
+    <li><strong>أيقونات المواقع في صفحة التبويب الجديد</strong> تُجلب من خدمة أيقونات، ومع فشلها يظهر الحرف الأول بخلفية متدرجة.</li>
+  </ul>
+  <div class="tip">للإبلاغ عن مشكلة أو اقتراح: افتح الإعدادات ← حول، أو راجع README مع حزمة التطبيق.</div>
+</section>
+
+</main>
+</body>
+</html>

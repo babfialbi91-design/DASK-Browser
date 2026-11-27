@@ -176,6 +176,8 @@ export type Request =
   | { type: 'setDnsResolver'; resolver: string }
   | { type: 'setListEnabled'; name: string; enabled: boolean }
   | { type: 'viewSource' }
+  | { type: 'editCommand'; cmd: 'cut' | 'copy' | 'paste' }
+  | { type: 'createShortcut' }
   | { type: 'resizeMenuPopup'; wide: boolean; top?: number; height?: number }
 
 interface CefQueryRequest {

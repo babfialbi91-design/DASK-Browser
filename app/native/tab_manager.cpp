@@ -230,7 +230,7 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
         "stopFind", "showDevTools", "savePagePdf", "printPage",
         "copyPageLink", "exitApp", "setLightTheme", "toggleAppMenu",
         "closeAppMenu", "setDnsResolver", "setListEnabled", "viewSource",
-        "resizeMenuPopup"};
+        "resizeMenuPopup", "editCommand", "createShortcut"};
     if (!kAllowedRequests.count(type)) {
       callback->Failure(403, "unknown bridge request type");
       return true;
@@ -451,6 +451,10 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
                            dict->GetBool("enabled"));
     } else if (type == "viewSource") {
       mgr_->ViewSourceActive();
+    } else if (type == "editCommand") {
+      mgr_->EditCommandActive(dict->GetString("cmd").ToString());
+    } else if (type == "createShortcut") {
+      mgr_->CreatePageShortcut();
     } else if (type == "resizeMenuPopup") {
       mgr_->ResizeMenuPopup(dict->GetBool("wide"), dict->GetInt("top"),
                             dict->GetInt("height"));
@@ -2318,6 +2322,66 @@ void TabManager::ViewSourceActive() {
     Tab* tab = FindTab(active_tab_id_);
     if (!tab || tab->internal || tab->url.empty()) return;
     CreateTab(L"view-source:" + tab->url);
+  });
+}
+
+void TabManager::EditCommandActive(const std::string& cmd) {
+  // Phase 7.5: menu-driven cut/copy/paste into the focused web content.
+  // Delivered as a real Ctrl+X/C/V key sequence so the renderer's own
+  // editing pipeline handles it (selection, inputs, textareas).
+  wchar_t key = 0;
+  if (cmd == "cut") key = L'X';
+  else if (cmd == "copy") key = L'C';
+  else if (cmd == "paste") key = L'V';
+  if (!key) return;
+  PostToCef([this, key]() {
+    Tab* tab = FindTab(active_tab_id_);
+    if (!tab || !tab->browser) return;
+    CefKeyEvent raw_down;
+    raw_down.type = KEYEVENT_RAWKEYDOWN;
+    raw_down.windows_key_code = key;
+    raw_down.modifiers = EVENTFLAG_CONTROL_DOWN;
+    tab->browser->GetHost()->SendKeyEvent(raw_down);
+    CefKeyEvent ch = raw_down;
+    ch.type = KEYEVENT_CHAR;
+    ch.character = key;
+    tab->browser->GetHost()->SendKeyEvent(ch);
+    CefKeyEvent up = raw_down;
+    up.type = KEYEVENT_KEYUP;
+    tab->browser->GetHost()->SendKeyEvent(up);
+  });
+}
+
+void TabManager::CreatePageShortcut() {
+  // Phase 7.5: "Create shortcut" — write a .url Internet shortcut for the
+  // active page onto the user's Desktop (standard shell format).
+  PostToCef([this]() {
+    Tab* tab = FindTab(active_tab_id_);
+    if (!tab || tab->internal || tab->url.empty()) return;
+    wchar_t desktop[MAX_PATH] = {};
+    if (FAILED(::SHGetFolderPathW(nullptr, CSIDL_DESKTOPDIRECTORY, nullptr,
+                                  0, desktop))) {
+      return;
+    }
+    std::wstring name = tab->title.empty() ? L"صفحة" : tab->title;
+    for (wchar_t& c : name) {
+      if (c == L'\\' || c == L'/' || c == L':' || c == L'*' || c == L'?' ||
+          c == L'"' || c == L'<' || c == L'>' || c == L'|') {
+        c = L'_';
+      }
+    }
+    // Trim so the full path stays within MAX_PATH.
+    const size_t budget = MAX_PATH - wcslen(desktop) - 12;
+    if (name.size() > budget) name.resize(budget);
+    std::wstring base = std::wstring(desktop) + L"\\" + name;
+    std::wstring path = base + L".url";
+    for (int i = 2; ::GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+         ++i) {
+      path = base + L" (" + std::to_wstring(i) + L").url";
+    }
+    std::ofstream f(path, std::ios::binary);
+    if (!f) return;
+    f << "[InternetShortcut]\r\nURL=" << WstrToUtf8(tab->url) << "\r\n";
   });
 }
 

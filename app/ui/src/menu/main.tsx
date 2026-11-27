@@ -186,6 +186,19 @@ function MenuPage() {
             }
             const it = item as MenuItem
             const Icon = it.icon
+            if (it.disabled) {
+              return (
+                <div
+                  key={i}
+                  className="menu-item disabled"
+                  title={it.disabledNote}
+                  aria-disabled="true"
+                >
+                  <span className="menu-icon"><Icon size={16} /></span>
+                  <span className="menu-label">{it.label}</span>
+                </div>
+              )
+            }
             return (
               <button
                 key={i}
