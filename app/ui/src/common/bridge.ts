@@ -180,6 +180,8 @@ export type Request =
   | { type: 'createShortcut' }
   | { type: 'installPageApp' }
   | { type: 'resizeMenuPopup'; wide: boolean; top?: number; height?: number }
+  | { type: 'dragWindow' }
+  | { type: 'windowControl'; action: 'min' | 'max' | 'close' }
 
 interface CefQueryRequest {
   request: string

@@ -15,6 +15,16 @@
 #include <string>
 #include <vector>
 
+// GET_X_LPARAM / GET_Y_LPARAM (normally from windowsx.h — including that
+// header here would poison the CEF DOM headers with its GetFirstChild and
+// GetNextSibling function-like macros).
+#ifndef GET_X_LPARAM
+#define GET_X_LPARAM(lp) ((int)(short)LOWORD(lp))
+#endif
+#ifndef GET_Y_LPARAM
+#define GET_Y_LPARAM(lp) ((int)(short)HIWORD(lp))
+#endif
+
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "dask_app.h"
@@ -250,6 +260,76 @@ LRESULT CALLBACK MenuPopupWndProc(HWND hwnd, UINT msg, WPARAM wparam,
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
   switch (msg) {
+    case WM_NCCALCSIZE: {
+      // Phase 9: custom title bar — the React tab strip replaces the native
+      // caption (no "DASK Browser" text row, no duplicated buttons). Keep
+      // WS_OVERLAPPEDWINDOW so resize borders, Aero snap and Alt+Space work;
+      // WM_NCHITTEST below restores the invisible resize borders.
+      // --app windows keep the standard caption (their caption shows the
+      // page title, there is no toolbar to host controls).
+      if (wparam && !TabManager::launch_app()) {
+        if (::IsZoomed(hwnd)) {
+          // Maximized: the window is inflated by the invisible resize
+          // border — keep the content inside the screen.
+          const int pad = ::GetSystemMetrics(SM_CXPADDEDBORDER);
+          const int cx = ::GetSystemMetrics(SM_CXFRAME) + pad;
+          const int cy = ::GetSystemMetrics(SM_CYFRAME) + pad;
+          auto* rects = reinterpret_cast<NCCALCSIZE_PARAMS*>(lparam);
+          rects->rgrc[0].left += cx;
+          rects->rgrc[0].top += cy;
+          rects->rgrc[0].right -= cx;
+          rects->rgrc[0].bottom -= cy;
+        }
+        return 0;  // client area == window rect
+      }
+      return ::DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+    case WM_NCHITTEST: {
+      // Phase 9: the removed frame ate the resize borders — reimplement
+      // them (invisible, ~8px) on all four edges. The tab strip itself is
+      // covered by the CEF toolbar child, so drag handling goes through
+      // the bridge (dragWindow -> WM_NCLBUTTONDOWN/HTCAPTION).
+      if (!TabManager::launch_app() && !::IsZoomed(hwnd)) {
+        const POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        RECT rc;
+        if (::GetWindowRect(hwnd, &rc)) {
+          const int pad = ::GetSystemMetrics(SM_CXPADDEDBORDER);
+          const int cx = ::GetSystemMetrics(SM_CXSIZEFRAME) + pad;
+          const int cy = ::GetSystemMetrics(SM_CYSIZEFRAME) + pad;
+          const bool top = pt.y < rc.top + cy;
+          const bool bottom = pt.y >= rc.bottom - cy;
+          const bool left = pt.x < rc.left + cx;
+          const bool right = pt.x >= rc.right - cx;
+          if (top && left) return HTTOPLEFT;
+          if (top && right) return HTTOPRIGHT;
+          if (bottom && left) return HTBOTTOMLEFT;
+          if (bottom && right) return HTBOTTOMRIGHT;
+          if (top) return HTTOP;
+          if (bottom) return HTBOTTOM;
+          if (left) return HTLEFT;
+          if (right) return HTRIGHT;
+        }
+      }
+      return ::DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+    case WM_DASK_DRAG: {
+      // Phase 9: the toolbar's drag region — start a system caption drag
+      // (supports Aero snap + the Alt+Space menu) from the cursor position.
+      ::ReleaseCapture();
+      POINT pt;
+      ::GetCursorPos(&pt);
+      ::PostMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION,
+                     MAKELPARAM(pt.x, pt.y));
+      return 0;
+    }
+    case WM_DASK_WINDOWCTL: {
+      // Phase 9: wparam 0=min 1=max/restore 2=close (from the toolbar).
+      const WPARAM cmd = wparam == 0 ? SC_MINIMIZE
+                       : wparam == 2 ? SC_CLOSE
+                       : (::IsZoomed(hwnd) ? SC_RESTORE : SC_MAXIMIZE);
+      ::PostMessageW(hwnd, WM_SYSCOMMAND, cmd, 0);
+      return 0;
+    }
     case WM_SIZE: {
       if (wparam != SIZE_MINIMIZED) DoLayout();
       return 0;
@@ -586,6 +666,13 @@ int RunBrowserWindow(HINSTANCE h_instance, int n_cmd_show) {
 
   ::ShowWindow(hwnd, n_cmd_show);
   ::UpdateWindow(hwnd);
+  // Phase 9: re-apply the custom frame (WM_NCCALCSIZE returns 0 -> the tab
+  // strip IS the title bar). Creation-time NCCALCSIZE can be cached by DWM,
+  // so force one frame recomputation + layout after showing the window.
+  ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                     SWP_NOACTIVATE);
+  DoLayout();
 
   // Create the UI browser + restore the last session.
   TabManager::Get()->Start();

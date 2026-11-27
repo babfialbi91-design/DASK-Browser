@@ -64,6 +64,59 @@ input:focus-visible,
   direction: rtl;
 }
 
+/* Phase 9: private window design — incognito styling. */
+.toolbar-root.incognito {
+  --bg: #201a2e;
+  --panel: #2b2340;
+  --panel-raised: #342a4d;
+  --hover: #3b3057;
+  --border: #3d3456;
+  --text: #eceaf2;
+}
+
+/* Phase 9: native caption buttons inside the tab strip. */
+.win-controls {
+  display: flex;
+  height: 38px;
+  margin-right: -8px; /* reach the window's right edge over the strip padding */
+  align-self: flex-start;
+  flex: none;
+}
+
+.win-btn {
+  width: 44px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 0;
+  color: var(--muted);
+}
+
+.win-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.win-btn.win-close:hover {
+  background: #d83b3b;
+  color: #fff;
+}
+
+.incognito-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  margin: 4px 6px 0 auto; /* pushed to the far left in RTL */
+  padding: 0 10px;
+  border-radius: 12px;
+  background: rgba(139, 92, 246, 0.22);
+  color: #cbb8ff;
+  font-size: 12px;
+  font-weight: 600;
+  flex: none;
+}
+
 .tab-strip {
   display: flex;
   align-items: flex-end;

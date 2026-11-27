@@ -51,6 +51,8 @@ constexpr UINT WM_DASK_MENU_HOST = WM_APP + 0x115;   // Phase 7: create menu pop
 constexpr UINT WM_DASK_MENU_CLOSED = WM_APP + 0x116; // Phase 7: menu popup deactivated/closed
 constexpr UINT WM_DASK_DESTROY_MENU_HOST = WM_APP + 0x117; // Phase 7: destroy popup on its owning thread
 constexpr UINT WM_DASK_MENU_WIDE = WM_APP + 0x118; // Phase 7.5: flyout clip (wparam=wide, lparam= top | height<<16)
+constexpr UINT WM_DASK_DRAG = WM_APP + 0x119;      // Phase 9: start a caption drag (drag region in the tab strip)
+constexpr UINT WM_DASK_WINDOWCTL = WM_APP + 0x11A; // Phase 9: wparam 0=min 1=max/restore 2=close
 
 // Height of the React toolbar region (tab strip + nav bar), CSS px.
 constexpr int kUiToolbarHeight = 84;

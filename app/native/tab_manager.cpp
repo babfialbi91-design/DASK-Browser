@@ -230,7 +230,8 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
         "stopFind", "showDevTools", "savePagePdf", "printPage",
         "copyPageLink", "exitApp", "setLightTheme", "toggleAppMenu",
         "closeAppMenu", "setDnsResolver", "setListEnabled", "viewSource",
-        "resizeMenuPopup", "editCommand", "createShortcut", "installPageApp"};
+        "resizeMenuPopup", "editCommand", "createShortcut", "installPageApp",
+        "dragWindow", "windowControl"};
     if (!kAllowedRequests.count(type)) {
       callback->Failure(403, "unknown bridge request type");
       return true;
@@ -457,6 +458,22 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
       mgr_->CreatePageShortcut();
     } else if (type == "installPageApp") {
       mgr_->InstallPageApp();
+    } else if (type == "dragWindow" || type == "windowControl") {
+      // Phase 9: custom title bar. Only the toolbar browser (tab id 0) may
+      // drag the window or use the min/max/close controls — web content and
+      // even internal pages cannot.
+      if (!mgr_->ui_browser_ || !browser->IsSame(mgr_->ui_browser_)) {
+        callback->Failure(403, "window controls are toolbar-only");
+        return true;
+      }
+      if (type == "dragWindow") {
+        ::PostMessageW(mgr_->main_hwnd_, WM_DASK_DRAG, 0, 0);
+      } else {
+        const std::string action = dict->GetString("action").ToString();
+        const WPARAM wparam = action == "min" ? 0
+                              : action == "close" ? 2 : 1;
+        ::PostMessageW(mgr_->main_hwnd_, WM_DASK_WINDOWCTL, wparam, 0);
+      }
     } else if (type == "resizeMenuPopup") {
       mgr_->ResizeMenuPopup(dict->GetBool("wide"), dict->GetInt("top"),
                             dict->GetInt("height"));
@@ -951,7 +968,8 @@ void TabManager::Start() {
         if (!restored.empty()) quick_links_ = std::move(restored);
       }
       CefRefPtr<CefListValue> tabs = dict->GetList("tabs");
-      if (tabs && restore_session_ && !direct_url) {
+      // Phase 9: a private window starts fresh — it never restores tabs.
+      if (tabs && restore_session_ && !direct_url && !force_private_) {
         for (size_t i = 0;
              i < tabs->GetSize() && i < static_cast<size_t>(kMaxTabs); ++i) {
           CefRefPtr<CefDictionaryValue> item = tabs->GetDictionary(i);
@@ -1615,6 +1633,9 @@ void TabManager::PushUiEvent(bool focus_address) {
 }
 
 void TabManager::SaveSession() {
+  // Phase 9: a --private window never writes session state at all — the
+  // shared session.json stays untouched by private browsing.
+  if (force_private_) return;
   CefRefPtr<CefDictionaryValue> root_dict = CefDictionaryValue::Create();
   CefRefPtr<CefListValue> tabs_list = CefListValue::Create();
   for (const Tab& tab : tabs_) {

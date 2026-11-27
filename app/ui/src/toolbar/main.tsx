@@ -118,6 +118,43 @@ function App() {
   )
 
   const active = state?.tabs.find((t) => t.id === state.activeTabId)
+  // Phase 9: private window design — in a --private process every tab is
+  // private, so the toolbar switches to the incognito look + badge.
+  const privateWindow =
+    !!state && state.tabs.length > 0 && state.tabs.every((t) => t.private)
+  // Custom title bar: dragging from the empty parts of the tab strip / nav
+  // bar. Drag starts only after the cursor moves a little so plain clicks
+  // and double-click-to-maximize keep working.
+  const dragRef = useRef<{ x: number; y: number; sent: boolean } | null>(null)
+  const dragHit = (e: React.MouseEvent) => {
+    const el = e.target as HTMLElement
+    if (e.button !== 0) return null
+    if (el.closest('button, input, .tab, .win-controls, .incognito-badge'))
+      return null
+    return el
+  }
+  const onBarMouseDown = (e: React.MouseEvent) => {
+    if (!dragHit(e)) return
+    dragRef.current = { x: e.screenX, y: e.screenY, sent: false }
+  }
+  const onBarMouseMove = (e: React.MouseEvent) => {
+    const d = dragRef.current
+    if (!d || d.sent) return
+    const dx = e.screenX - d.x
+    const dy = e.screenY - d.y
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+      d.sent = true
+      dragRef.current = null
+      go({ type: 'dragWindow' })
+    }
+  }
+  const onBarMouseUp = () => {
+    dragRef.current = null
+  }
+  const onBarDoubleClick = (e: React.MouseEvent) => {
+    if (!dragHit(e)) return
+    go({ type: 'windowControl', action: 'max' })
+  }
   const blockedHere = state?.privacy
     ? state.privacy.tabBlockedCounts[String(state.activeTabId)] ?? 0
     : 0
@@ -157,8 +194,59 @@ function App() {
   const loading = !!active?.loading
 
   return (
-    <div className="toolbar-root">
-      <div className="tab-strip" role="tablist">
+    <div className={'toolbar-root' + (privateWindow ? ' incognito' : '')}>
+      <div
+        className="tab-strip"
+        role="tablist"
+        onMouseDown={onBarMouseDown}
+        onMouseMove={onBarMouseMove}
+        onMouseUp={onBarMouseUp}
+        onMouseLeave={onBarMouseUp}
+        onDoubleClick={onBarDoubleClick}
+      >
+        {/* Phase 9: window controls live in the tab strip (the native
+            title bar is gone). RTL flow puts them in the top-right corner. */}
+        <div className="win-controls">
+          <button
+            className="win-btn"
+            title="تصغير"
+            aria-label="تصغير"
+            onClick={() => go({ type: 'windowControl', action: 'min' })}
+          >
+            <svg viewBox="0 0 12 12" width="12" height="12">
+              <line x1="1" y1="6" x2="11" y2="6" stroke="currentColor" strokeWidth="1" />
+            </svg>
+          </button>
+          <button
+            className="win-btn"
+            title="تكبير/استعادة"
+            aria-label="تكبير أو استعادة"
+            onClick={() => go({ type: 'windowControl', action: 'max' })}
+          >
+            <svg viewBox="0 0 12 12" width="12" height="12">
+              <rect x="1.5" y="1.5" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1" />
+            </svg>
+          </button>
+          <button
+            className="win-btn win-close"
+            title="إغلاق (Alt+F4)"
+            aria-label="إغلاق النافذة"
+            onClick={() => go({ type: 'windowControl', action: 'close' })}
+          >
+            <svg viewBox="0 0 12 12" width="12" height="12">
+              <line x1="1" y1="1" x2="11" y2="11" stroke="currentColor" strokeWidth="1" />
+              <line x1="11" y1="1" x2="1" y2="11" stroke="currentColor" strokeWidth="1" />
+            </svg>
+          </button>
+        </div>
+        {privateWindow && (
+          <div className="incognito-badge" title="نافذة خاصة: لا تُحفظ السجلات ولا الكوكيز بعد الإغلاق">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+              <path d="M17.06 13c-1.86 0-3.42 1.33-3.82 3.1-.95-.41-1.82-.3-2.48 0C10.35 14.31 8.8 13 6.94 13 4.77 13 3 14.79 3 17s1.77 4 3.94 4c2.06 0 3.74-1.62 3.9-3.65.38-.34 1.21-.9 2.32-.01.16 2.03 1.84 3.66 3.9 3.66 2.17 0 3.94-1.79 3.94-4s-1.77-4-3.94-4zM6.94 19.4c-1.28 0-2.32-1.07-2.32-2.4s1.04-2.4 2.32-2.4 2.32 1.07 2.32 2.4-1.04 2.4-2.32 2.4zm10.12 0c-1.28 0-2.32-1.07-2.32-2.4s1.04-2.4 2.32-2.4 2.32 1.07 2.32 2.4-1.04 2.4-2.32 2.4zM20.92 7.7c-.01-.03-.02-.05-.03-.08L19.4 3.2c-.14-.41-.52-.7-.95-.7h-13c-.43 0-.81.28-.95.7L3.11 7.62c-.01.03-.03.05-.03.08-.05.25-.08.5-.08.75C3 10.31 4.6 12 6.56 12c1.37 0 2.55-.9 3.11-2.18.55 1.28 1.73 2.18 3.11 2.18 1.37 0 2.55-.9 3.11-2.18.55 1.28 1.73 2.18 3.11 2.18 1.96 0 3.56-1.69 3.56-3.55 0-.25-.03-.5-.08-.75l-.56-.0z"/>
+            </svg>
+            نافذة خاصة
+          </div>
+        )}
         {state.tabs.map((tab) => (
           <ToolbarTab
             key={tab.id}
@@ -175,7 +263,14 @@ function App() {
         </button>
       </div>
 
-      <div className="nav-bar">
+      <div
+        className="nav-bar"
+        onMouseDown={onBarMouseDown}
+        onMouseMove={onBarMouseMove}
+        onMouseUp={onBarMouseUp}
+        onMouseLeave={onBarMouseUp}
+        onDoubleClick={onBarDoubleClick}
+      >
         <NavButton title="رجوع (Alt+السهم الأيسر)" disabled={!active?.url || active.url.startsWith('dask://')} onClick={() => go({ type: 'back' })}>
           {icons.back}
         </NavButton>
