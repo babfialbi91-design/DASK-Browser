@@ -11,17 +11,19 @@ export type MenuItem = {
   icon: MenuIconComponent
   /** Leaf action (mutually exclusive with items). */
   run?: () => void
-  /** Opens a submenu (mutually exclusive with run). */
-  items?: MenuItem[]
+  /** Opens a submenu (mutually exclusive with run). Headers + items. */
+  items?: MenuRow[]
   disabled?: boolean
   disabledNote?: string
 }
 
 export type MenuDivider = { kind: 'divider' }
+export type MenuHeader = { kind: 'header'; label: string }
 
 export type MenuRow =
   | MenuItem
   | MenuDivider
+  | MenuHeader
   | { kind: 'zoomRow' }
 
 export type MenuContext = {

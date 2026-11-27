@@ -229,7 +229,8 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
         "newPrivateWindow", "adjustZoom", "toggleFullscreen", "findInPage",
         "stopFind", "showDevTools", "savePagePdf", "printPage",
         "copyPageLink", "exitApp", "setLightTheme", "toggleAppMenu",
-        "closeAppMenu", "setDnsResolver", "setListEnabled", "viewSource"};
+        "closeAppMenu", "setDnsResolver", "setListEnabled", "viewSource",
+        "resizeMenuPopup"};
     if (!kAllowedRequests.count(type)) {
       callback->Failure(403, "unknown bridge request type");
       return true;
@@ -450,6 +451,8 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
                            dict->GetBool("enabled"));
     } else if (type == "viewSource") {
       mgr_->ViewSourceActive();
+    } else if (type == "resizeMenuPopup") {
+      mgr_->ResizeMenuPopup(dict->GetBool("wide"));
     } else if (type == "setQuickLinks") {
       CefRefPtr<CefListValue> list = dict->GetList("links");
       if (list && list->GetSize() <= 24) {
@@ -2034,6 +2037,7 @@ void TabManager::ShowAppMenuInternal() {
   HWND popup = reinterpret_cast<HWND>(::SendMessageW(
       main_hwnd_, WM_DASK_MENU_HOST, 0, 0));
   if (!popup) return;
+  menu_popup_hwnd_ = popup;
 
   CefWindowInfo info;
   RECT rc;
@@ -2083,6 +2087,16 @@ void TabManager::ToggleAppMenu() {
   });
 }
 
+void TabManager::ResizeMenuPopup(bool wide) {
+  // Phase 7.5: expand the popup to the right (over the page area) so the
+  // hover flyout renders inside the window instead of being clipped.
+  PostToCef([this, wide]() {
+    if (!menu_open_ || !menu_popup_hwnd_) return;
+    ::PostMessageW(main_hwnd_, WM_DASK_MENU_WIDE,
+                   wide ? 1 : 0, 0);
+  });
+}
+
 void TabManager::OnMenuDeactivated() {
   // Called on the Win32 thread when the popup lost activation.
   const DWORD now = ::GetTickCount();
@@ -2101,6 +2115,7 @@ void TabManager::OnMenuBrowserClosed() {
   // Runs on the CEF UI thread. Destroy the popup host on the Win32 thread
   // and clear state.
   menu_browser_ = nullptr;
+  menu_popup_hwnd_ = nullptr;
   if (menu_open_) menu_open_ = false;
   ::SendMessageW(main_hwnd_, WM_DASK_DESTROY_MENU_HOST, 0, 0);
 }

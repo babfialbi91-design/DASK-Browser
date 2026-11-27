@@ -363,6 +363,22 @@ input:focus-visible,
   direction: rtl;
   overflow-y: auto;
   user-select: none;
+  /* Phase 7.5: ambient page background (pure CSS mesh, no network) —
+     clearly visible and covers the whole page behind every element. */
+  background:
+    radial-gradient(1100px 700px at 85% -10%, rgba(139, 92, 246, 0.38), transparent 60%),
+    radial-gradient(900px 600px at 8% 108%, rgba(59, 130, 246, 0.30), transparent 60%),
+    radial-gradient(800px 600px at 45% 42%, rgba(236, 72, 153, 0.14), transparent 65%),
+    linear-gradient(165deg, #191627 0%, #1d1a33 40%, #151b2e 100%);
+}
+
+/* Light theme softens the same mesh. */
+[data-theme='light'] .newtab-root {
+  background:
+    radial-gradient(1100px 700px at 85% -10%, rgba(124, 58, 237, 0.22), transparent 60%),
+    radial-gradient(900px 600px at 8% 108%, rgba(59, 130, 246, 0.20), transparent 60%),
+    radial-gradient(800px 600px at 45% 42%, rgba(236, 72, 153, 0.12), transparent 65%),
+    linear-gradient(165deg, #f3f1fb 0%, #edf0fb 55%, #eef2fc 100%);
 }
 
 .wordmark {
@@ -385,12 +401,17 @@ input:focus-visible,
   padding: 0 20px;
   border-radius: 24px;
   border: 1px solid var(--border);
-  background: var(--panel);
+  /* Translucent so the ambient background shows through behind the box. */
+  background: rgba(255, 255, 255, 0.07);
   color: var(--text);
   font-size: 15px;
   outline: none;
   text-align: right;
   user-select: text;
+}
+
+[data-theme='light'] #nt-search {
+  background: rgba(255, 255, 255, 0.65);
 }
 
 #nt-search:focus {
@@ -412,13 +433,22 @@ input:focus-visible,
   gap: 6px;
   padding: 16px 8px;
   border-radius: var(--radius);
-  background: var(--panel);
+  /* Translucent so the ambient background shows through behind the tiles. */
+  background: rgba(255, 255, 255, 0.06);
   color: var(--text);
   text-align: center;
 }
 
 .link-tile:hover {
-  background: var(--hover);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+[data-theme='light'] .link-tile {
+  background: rgba(255, 255, 255, 0.55);
+}
+
+[data-theme='light'] .link-tile:hover {
+  background: rgba(255, 255, 255, 0.85);
 }
 
 /* Phase 7.5: add-site tile + inline favicons with gradient backgrounds. */

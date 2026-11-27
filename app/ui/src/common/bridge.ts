@@ -176,6 +176,7 @@ export type Request =
   | { type: 'setDnsResolver'; resolver: string }
   | { type: 'setListEnabled'; name: string; enabled: boolean }
   | { type: 'viewSource' }
+  | { type: 'resizeMenuPopup'; wide: boolean }
 
 interface CefQueryRequest {
   request: string

@@ -1,14 +1,14 @@
 // Phase 7: entry point of the popup menu page (menu.html inside the native
 // popup window). Renders the menu permanently open; the window itself
 // closes on outside click (WM_ACTIVATE) or Escape.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import '../common/theme.css'
 import './menu.css'
 import { send, subscribe, type AppState } from '../common/bridge'
 import { buildMenuRows } from './menuItems'
 import { menuIcons } from './menuIcons'
-import type { MenuItem } from './menuModel'
+import type { MenuItem, MenuRow } from './menuModel'
 
 // Icon pack artwork (DASK_Browser_Icon_Pack) for the items that map to it:
 // incognito -> private window, app logo -> about, private shield -> tab strip.
@@ -21,8 +21,17 @@ const packIcons: Record<string, string> = {
   'حول DASK Browser': appUrl,
 }
 
-function MenuItemRow({ item, close }: { item: MenuItem; close: () => void }) {
-  const [submenuOpen, setSubmenuOpen] = useState(false)
+function MenuItemRow({
+  item,
+  close,
+  onSubmenu,
+  onHoverOut,
+}: {
+  item: MenuItem
+  close: () => void
+  onSubmenu: (items: MenuRow[], top: number) => void
+  onHoverOut?: () => void
+}) {
   const packSrc = packIcons[item.label]
   const icon = packSrc ? (
     <img src={packSrc} width={17} height={17} alt="" />
@@ -42,24 +51,17 @@ function MenuItemRow({ item, close }: { item: MenuItem; close: () => void }) {
   if (item.items) {
     return (
       <div
-        className={'menu-item has-sub' + (submenuOpen ? ' open' : '')}
-        onMouseEnter={() => setSubmenuOpen(true)}
-        onMouseLeave={() => setSubmenuOpen(false)}
-        onClick={() => setSubmenuOpen((v) => !v)}
+        className="menu-item has-sub"
+        onMouseEnter={(e) =>
+          onSubmenu(item.items!, (e.currentTarget as HTMLElement).offsetTop)
+        }
+        onMouseLeave={() => onHoverOut?.()}
         role="menuitem"
         aria-haspopup="true"
-        aria-expanded={submenuOpen}
       >
         <span className="menu-icon">{icon}</span>
         <span className="menu-label">{item.label}</span>
         <span className="menu-arrow"><menuIcons.chevronRight size={14} /></span>
-        {submenuOpen && (
-          <div className="menu-submenu" role="menu">
-            {item.items.map((sub, i) => (
-              <MenuItemRow key={i} item={sub} close={close} />
-            ))}
-          </div>
-        )}
       </div>
     )
   }
@@ -68,6 +70,7 @@ function MenuItemRow({ item, close }: { item: MenuItem; close: () => void }) {
     <button
       className="menu-item"
       role="menuitem"
+      onMouseEnter={() => onHoverOut?.()}
       onClick={() => {
         item.run?.()
         close()
@@ -111,6 +114,11 @@ function ZoomRow({ state, close }: { state: AppState; close: () => void }) {
 
 function MenuPage() {
   const [state, setState] = useState<AppState | null>(null)
+  // Phase 7.5: Chrome-style hover flyout. The popup window expands to the
+  // left (resizeMenuPopup) while a submenu is open, and the panel renders
+  // inside the expanded area next to the hovered row — never clipped.
+  const [sub, setSub] = useState<{ title: string; items: MenuRow[]; top: number } | null>(null)
+  const closeTimer = useRef<number | null>(null)
   useEffect(() => subscribe(setState), [])
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -120,6 +128,21 @@ function MenuPage() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  const openSub = (title: string, items: MenuRow[], top: number) => {
+    if (closeTimer.current) {
+      window.clearTimeout(closeTimer.current)
+      closeTimer.current = null
+    }
+    if (!sub) void send({ type: 'resizeMenuPopup', wide: true }).catch(() => {})
+    setSub({ title, items, top })
+  }
+  const closeSub = () => {
+    if (closeTimer.current) window.clearTimeout(closeTimer.current)
+    closeTimer.current = window.setTimeout(() => {
+      setSub(null)
+      void send({ type: 'resizeMenuPopup', wide: false }).catch(() => {})
+    }, 260)
+  }
   const close = () => {
     void send({ type: 'closeAppMenu' }).catch(() => {})
   }
@@ -129,10 +152,57 @@ function MenuPage() {
 
   return (
     <div className="menu-page" role="menu" aria-label="القائمة الرئيسية">
+      {sub && (
+        <div
+          className="menu-flyout"
+          role="menu"
+          style={{ top: sub.top }}
+          onMouseEnter={() => {
+            if (closeTimer.current) {
+              window.clearTimeout(closeTimer.current)
+              closeTimer.current = null
+            }
+          }}
+          onMouseLeave={closeSub}
+        >
+          {sub.items.map((item, i) => {
+            if (item.kind === 'divider') return <div key={i} className="menu-divider" />
+            if (item.kind === 'header') {
+              return <div key={i} className="flyout-header">{item.label}</div>
+            }
+            const it = item as MenuItem
+            const Icon = it.icon
+            return (
+              <button
+                key={i}
+                className="menu-item"
+                role="menuitem"
+                onClick={() => {
+                  it.run?.()
+                  close()
+                }}
+              >
+                <span className="menu-icon"><Icon size={16} /></span>
+                <span className="menu-label">{it.label}</span>
+                {it.shortcut && <span className="menu-shortcut">{it.shortcut}</span>}
+              </button>
+            )
+          })}
+        </div>
+      )}
       {rows.map((row, i) => {
         if (row.kind === 'divider') return <div key={i} className="menu-divider" />
         if (row.kind === 'zoomRow') return <ZoomRow key={i} state={state} close={close} />
-        return <MenuItemRow key={i} item={row} close={close} />
+        if (row.kind !== 'item') return null
+        return (
+          <MenuItemRow
+            key={i}
+            item={row}
+            close={close}
+            onSubmenu={(items, top) => openSub(row.label, items, top)}
+            onHoverOut={closeSub}
+          />
+        )
       })}
     </div>
   )

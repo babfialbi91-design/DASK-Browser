@@ -304,6 +304,33 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         return TRUE;
       }, 0);
       return 0;
+    case WM_DASK_MENU_WIDE: {
+      // Phase 7.5: expand/shrink the popup for the hover flyout. The menu
+      // column stays at the right edge (RTL); the flyout area extends to
+      // the right, over the page. Values are passed through the LPARAM so
+      // the EnumWindows lambda stays capture-free (WNDENUMPROC).
+      struct WideCtx { HWND main; int target; int height; };
+      WideCtx ctx{hwnd, wparam ? 620 : 300, 600};
+      ::EnumWindows([](HWND w, LPARAM lp) -> BOOL {
+        auto* c = reinterpret_cast<WideCtx*>(lp);
+        wchar_t cls[64] = {};
+        ::GetClassNameW(w, cls, 64);
+        if (::lstrcmpW(cls, L"DaskMenuPopup") == 0 &&
+            ::GetWindow(w, GW_OWNER) == c->main) {
+          RECT rc;
+          ::GetWindowRect(w, &rc);
+          ::SetWindowPos(w, nullptr, rc.left, rc.top, c->target, c->height,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+          if (HWND chrome = ::FindWindowExW(w, nullptr, L"Chrome_WidgetWin_1",
+                                            nullptr)) {
+            ::SetWindowPos(chrome, nullptr, 0, 0, c->target, c->height,
+                           SWP_NOZORDER | SWP_NOACTIVATE);
+          }
+        }
+        return TRUE;
+      }, reinterpret_cast<LPARAM>(&ctx));
+      return 0;
+    }
     case WM_DASK_LAYOUT: {
       ShowActiveTab();
       DoLayout();

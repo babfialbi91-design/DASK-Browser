@@ -165,3 +165,49 @@
 .find-btn:hover {
   background: var(--hover);
 }
+
+/* ---- Phase 7.5: drill-in submenu rows ---- */
+.menu-back {
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.menu-back:hover {
+  background: var(--hover);
+}
+.menu-back-icon {
+  transform: scaleX(-1);  /* RTL: back arrow points right */
+}
+
+/* ---- Phase 7.5: Chrome-style hover flyout inside the widened popup ---- */
+.menu-page {
+  position: relative;
+  width: 300px;
+  /* RTL + auto inline-start margin keeps the column at the popup's LEFT
+     edge (under the hamburger) so it never jumps when the window expands;
+     the flyout then opens in the expanded right area. */
+  margin-inline-start: auto;
+  box-sizing: border-box;
+}
+.flyout-header {
+  padding: 8px 12px 4px;
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+}
+.menu-flyout {
+  position: absolute;
+  /* The popup anchors at the main window's left edge and expands to the
+     right when a submenu opens, so the flyout panel sits immediately to
+     the RIGHT of the 300px menu column — beside the menu, not on top of it. */
+  left: calc(100% + 6px);
+  width: 300px;
+  padding: 5px;
+  background: var(--panel-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+  z-index: 5;
+  animation: menu-in 0.1s ease-out;
+}
