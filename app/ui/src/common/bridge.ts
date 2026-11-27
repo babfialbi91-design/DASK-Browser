@@ -104,6 +104,7 @@ export interface AppState {
   retentionDays: number
   dbNote?: string
   lightTheme: boolean
+  accent?: string
   dnsResolver: string
   fullscreen: boolean
   zoomPercent: number
@@ -182,6 +183,8 @@ export type Request =
   | { type: 'resizeMenuPopup'; wide: boolean; top?: number; height?: number }
   | { type: 'dragWindow' }
   | { type: 'windowControl'; action: 'min' | 'max' | 'close' }
+  | { type: 'getSetting'; key: 'accent' | 'onboarded' }
+  | { type: 'setSetting'; key: 'accent' | 'onboarded'; value: string }
 
 interface CefQueryRequest {
   request: string
@@ -272,6 +275,7 @@ function coerceState(value: unknown): AppState {
     retentionDays: parsed.retentionDays ?? 90,
     dbNote: parsed.dbNote,
     lightTheme: parsed.lightTheme ?? false,
+    accent: parsed.accent ?? undefined,
     dnsResolver: parsed.dnsResolver ?? '',
     fullscreen: parsed.fullscreen ?? false,
     zoomPercent: parsed.zoomPercent ?? 100,

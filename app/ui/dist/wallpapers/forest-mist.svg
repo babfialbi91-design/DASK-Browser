@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="fsky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9db8a6"/>
+      <stop offset=".5" stop-color="#c3d5c2"/>
+      <stop offset="1" stop-color="#e8eee0"/>
+    </linearGradient>
+    <linearGradient id="hill1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5c7a63"/>
+      <stop offset="1" stop-color="#46614e"/>
+    </linearGradient>
+    <linearGradient id="hill2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3d5a47"/>
+      <stop offset="1" stop-color="#2b4535"/>
+    </linearGradient>
+    <linearGradient id="hill3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#22402f"/>
+      <stop offset="1" stop-color="#12281c"/>
+    </linearGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#fsky)"/>
+  <circle cx="1500" cy="180" r="110" fill="#fff6d8" opacity=".8"/>
+  <circle cx="1500" cy="180" r="170" fill="#fff6d8" opacity=".25"/>
+  <g fill="#ffffff" opacity=".5">
+    <ellipse cx="400" cy="200" rx="200" ry="24"/>
+    <ellipse cx="540" cy="228" rx="150" ry="18"/>
+    <ellipse cx="1200" cy="300" rx="230" ry="22" opacity=".7"/>
+  </g>
+  <path fill="url(#hill1)" opacity=".55" d="M0 640 L300 540 L620 610 L940 520 L1260 600 L1580 530 L1920 600 L1920 1080 L0 1080 Z"/>
+  <rect y="600" width="1920" height="120" fill="#dfe8dc" opacity=".35"/>
+  <path fill="url(#hill2)" opacity=".8" d="M0 780 L280 680 L560 750 L860 660 L1180 740 L1500 670 L1800 760 L1920 720 L1920 1080 L0 1080 Z"/>
+  <rect y="760" width="1920" height="100" fill="#d5e0d4" opacity=".4"/>
+  <path fill="url(#hill3)" d="M0 940 L320 850 L660 920 L1000 840 L1340 930 L1660 860 L1920 940 L1920 1080 L0 1080 Z"/>
+  <g fill="#0c1f15">
+    <path d="M300 958 l34-130 34 130 z"/><path d="M360 962 l44-160 44 160 z"/>
+    <path d="M430 955 l30-110 30 110 z"/><path d="M480 968 l38-140 38 140 z"/>
+    <path d="M1420 955 l40-150 40 150 z"/><path d="M1490 962 l50-180 50 180 z"/>
+    <path d="M1560 950 l34-120 34 120 z"/><path d="M1620 966 l42-150 42 150 z"/>
+    <path d="M820 950 l32-115 32 115 z"/><path d="M880 960 l40-145 40 145 z"/>
+  </g>
+  <rect y="1030" width="1920" height="50" fill="#0a1810"/>
+</svg>

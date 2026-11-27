@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="dsky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3c1053"/>
+      <stop offset=".4" stop-color="#7b2d6b"/>
+      <stop offset=".68" stop-color="#d66a4e"/>
+      <stop offset=".85" stop-color="#f5a25d"/>
+      <stop offset="1" stop-color="#fbd08a"/>
+    </linearGradient>
+    <linearGradient id="dune1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e0885a"/>
+      <stop offset="1" stop-color="#a34f3e"/>
+    </linearGradient>
+    <linearGradient id="dune2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b25a44"/>
+      <stop offset="1" stop-color="#7c3b34"/>
+    </linearGradient>
+    <linearGradient id="dune3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6e3230"/>
+      <stop offset="1" stop-color="#3d1c22"/>
+    </linearGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#dsky)"/>
+  <circle cx="960" cy="600" r="90" fill="#ffdf9e"/>
+  <circle cx="960" cy="600" r="180" fill="#ffb56b" opacity=".3"/>
+  <g fill="#ffffff" opacity=".5">
+    <ellipse cx="420" cy="180" rx="190" ry="20"/>
+    <ellipse cx="560" cy="210" rx="130" ry="14"/>
+    <ellipse cx="1480" cy="150" rx="210" ry="18" opacity=".6"/>
+  </g>
+  <path fill="url(#dune1)" d="M0 760 Q480 660 960 740 T1920 700 L1920 1080 L0 1080 Z"/>
+  <path fill="url(#dune2)" d="M0 880 Q520 780 1040 860 T1920 820 L1920 1080 L0 1080 Z"/>
+  <path fill="url(#dune3)" d="M0 980 Q560 910 1120 970 T1920 950 L1920 1080 L0 1080 Z"/>
+  <g fill="#241019">
+    <path d="M300 742 l10 60 6 -60 z M310 800 l-4 26 14 0 z"/>
+    <path d="M340 736 l-8 66 10 -66 z"/>
+    <path d="M1500 700 l12 54 5 -54 z M1508 758 l-6 30 16 0 z"/>
+  </g>
+  <g stroke="#2c1521" stroke-width="4" fill="none" opacity=".65">
+    <path d="M240 960 Q420 940 620 956"/>
+    <path d="M1180 928 Q1380 912 1580 926"/>
+  </g>
+</svg>

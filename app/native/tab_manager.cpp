@@ -231,7 +231,7 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
         "copyPageLink", "exitApp", "setLightTheme", "toggleAppMenu",
         "closeAppMenu", "setDnsResolver", "setListEnabled", "viewSource",
         "resizeMenuPopup", "editCommand", "createShortcut", "installPageApp",
-        "dragWindow", "windowControl"};
+        "dragWindow", "windowControl", "getSetting", "setSetting"};
     if (!kAllowedRequests.count(type)) {
       callback->Failure(403, "unknown bridge request type");
       return true;
@@ -473,6 +473,30 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
         const WPARAM wparam = action == "min" ? 0
                               : action == "close" ? 2 : 1;
         ::PostMessageW(mgr_->main_hwnd_, WM_DASK_WINDOWCTL, wparam, 0);
+      }
+    } else if (type == "getSetting" || type == "setSetting") {
+      // Phase 9.5: small named preferences for the UI (accent color, first-run
+      // wizard flag). Strict key allowlist — the bridge never becomes a
+      // generic key/value store.
+      static const std::set<std::string> kSettingKeys = {"accent", "onboarded"};
+      const std::string key = dict->GetString("key").ToString();
+      if (!kSettingKeys.count(key)) {
+        callback->Failure(403, "unknown setting key");
+        return true;
+      }
+      if (type == "getSetting") {
+        callback->Success(mgr_->ReadPrefString(key));
+      } else {
+        const std::string value = dict->GetString("value").ToString();
+        if (value.size() > 64) {
+          callback->Failure(400, "value too long");
+          return true;
+        }
+        mgr_->SetPrefString(key, value);
+        if (key == "accent" && mgr_->accent_ != value) {
+          mgr_->accent_ = value;
+          mgr_->PushUiEvent();
+        }
       }
     } else if (type == "resizeMenuPopup") {
       mgr_->ResizeMenuPopup(dict->GetBool("wide"), dict->GetInt("top"),
@@ -922,6 +946,8 @@ void TabManager::Start() {
       prefs.GetBool("historyEnabled", true, &history_enabled_, &db_err);
       prefs.GetInt("historyRetentionDays", 90, &retention_days_, &db_err);
       prefs.GetBool("lightTheme", false, &light_theme_, &db_err);
+      prefs.GetString("accent", "", &accent_, &db_err);
+      if (accent_.empty() || accent_[0] != '#') accent_ = "#8b5cf6";
     }
   }
 
@@ -1532,6 +1558,7 @@ std::string TabManager::BuildStateJson(bool focus_address) {
   root_dict->SetBool("fullscreen", fullscreen_);
   root_dict->SetInt("zoomPercent", static_cast<int>(std::llround(std::exp(zoom_level_ * 0.1823215568) * 100.0)));
   root_dict->SetBool("lightTheme", light_theme_);
+  root_dict->SetString("accent", accent_);  // Phase 9.5: user accent color
   root_dict->SetString("dnsResolver", dns_resolver_);
   root_dict->SetBool("findActive", find_active_);
   root_dict->SetInt("findCount", find_count_);
@@ -2196,6 +2223,15 @@ void TabManager::OnMenuBrowserClosed() {
 // ---- Main menu commands (Phase 7) ------------------------------------------
 
 bool TabManager::force_private_ = false;
+
+void TabManager::SetPrefString(const std::string& key,
+                               const std::string& value) {
+  PostToDb([this, key, value]() {
+    if (!settings_store_) return;
+    std::string err;
+    settings_store_->SetString(key, value, &err);
+  });
+}
 bool TabManager::launch_app_ = false;
 std::wstring TabManager::launch_url_;
 
@@ -3076,6 +3112,8 @@ void TabManager::PerformProfileSwitch() {
       prefs.GetBool("historyEnabled", true, &history_enabled_, &db_err);
       prefs.GetInt("historyRetentionDays", 90, &retention_days_, &db_err);
       prefs.GetBool("lightTheme", false, &light_theme_, &db_err);
+      prefs.GetString("accent", "", &accent_, &db_err);
+      if (accent_.empty() || accent_[0] != '#') accent_ = "#8b5cf6";
     }
   }
   bool has_session = false;

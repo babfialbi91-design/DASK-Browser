@@ -30,6 +30,12 @@ body {
   overflow: hidden;
 }
 
+/* React mounts into #root — without an explicit height, min-height:100%
+   children (new tab wallpaper!) collapse to content height. */
+#root {
+  height: 100%;
+}
+
 button {
   border: none;
   background: transparent;
@@ -74,17 +80,27 @@ input:focus-visible,
   --text: #eceaf2;
 }
 
-/* Phase 9: native caption buttons inside the tab strip. */
+/* Phase 9: native caption buttons inside the tab strip. Positioned as an
+   absolute overlay at the window's top-right corner — never wraps, never
+   drifts into the nav row, always flush with the edge. */
+.toolbar-root {
+  position: relative;
+}
+
 .win-controls {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 60;
   display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
   height: 38px;
-  margin-right: -8px; /* reach the window's right edge over the strip padding */
-  align-self: flex-start;
   flex: none;
 }
 
 .win-btn {
-  width: 44px;
+  width: 46px;
   height: 38px;
   display: grid;
   place-items: center;
@@ -122,7 +138,8 @@ input:focus-visible,
   align-items: flex-end;
   gap: 4px;
   height: 38px;
-  padding: 4px 8px 0;
+  /* right padding reserves room for the absolute window controls */
+  padding: 4px 142px 0 8px;
   background: var(--bg);
 }
 
@@ -256,24 +273,52 @@ input:focus-visible,
 .settings-root {
   max-width: 760px;
   margin: 0 auto;
-  padding: 40px 24px 60px;
+  padding: 32px 24px 60px;
+}
+
+/* Phase 9.5: modernized settings — every section is a floating card. */
+.settings-root section {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px 24px 22px;
+  margin: 16px 0;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
 }
 
 .settings-root h1 {
-  color: var(--accent);
+  color: var(--text);
   font-size: 26px;
-  margin: 0 0 8px;
+  margin: 0 0 4px;
+}
+
+.settings-root h1 + div + div .settings-subtitle {
+  color: var(--muted);
 }
 
 .settings-root h2 {
-  font-size: 18px;
-  margin: 34px 0 10px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--border);
+  font-size: 15px;
+  margin: 0 0 14px;
+  padding: 0;
+  border: none;
+  color: var(--text);
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-root h2::before {
+  content: '';
+  width: 4px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--accent);
+  flex: none;
 }
 
 .settings-root h3 {
-  font-size: 14px;
+  font-size: 13px;
   margin: 18px 0 8px;
   color: var(--muted);
 }
@@ -296,6 +341,45 @@ input:focus-visible,
 
 .toggle-row input {
   margin-top: 4px;
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.settings-root input[type='text'],
+.settings-root input[type='search'],
+.settings-root input[type='number'],
+.settings-root select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font: inherit;
+  outline: none;
+}
+
+.settings-root input:focus-visible,
+.settings-root select:focus-visible {
+  border-color: var(--accent);
+}
+
+.settings-root .lists li,
+.settings-root .exceptions li {
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.settings-root .lists li:hover,
+.settings-root .exceptions li:hover {
+  background: var(--hover);
+}
+
+.settings-root .lists li:last-child,
+.settings-root .exceptions li:last-child {
+  border-bottom: none;
 }
 
 .lists,
@@ -406,6 +490,7 @@ input:focus-visible,
 /* ---------- New Tab page (newtab.html) ---------- */
 
 .newtab-root {
+  position: relative;
   min-height: 100%;
   display: flex;
   flex-direction: column;
@@ -416,22 +501,162 @@ input:focus-visible,
   direction: rtl;
   overflow-y: auto;
   user-select: none;
-  /* Phase 7.5: ambient page background (pure CSS mesh, no network) —
-     clearly visible and covers the whole page behind every element. */
-  background:
-    radial-gradient(1100px 700px at 85% -10%, rgba(139, 92, 246, 0.38), transparent 60%),
-    radial-gradient(900px 600px at 8% 108%, rgba(59, 130, 246, 0.30), transparent 60%),
-    radial-gradient(800px 600px at 45% 42%, rgba(236, 72, 153, 0.14), transparent 65%),
-    linear-gradient(165deg, #191627 0%, #1d1a33 40%, #151b2e 100%);
+  /* Phase 9.5: full-page nature wallpaper (bundled SVG scenes, daily pick).
+     The background-image is set inline; these layers keep it readable. */
+  background-color: #10121a;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 
-/* Light theme softens the same mesh. */
-[data-theme='light'] .newtab-root {
+/* Dark veil over the wallpaper so the UI stays readable. */
+.nt-veil {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
   background:
-    radial-gradient(1100px 700px at 85% -10%, rgba(124, 58, 237, 0.22), transparent 60%),
-    radial-gradient(900px 600px at 8% 108%, rgba(59, 130, 246, 0.20), transparent 60%),
-    radial-gradient(800px 600px at 45% 42%, rgba(236, 72, 153, 0.12), transparent 65%),
-    linear-gradient(165deg, #f3f1fb 0%, #edf0fb 55%, #eef2fc 100%);
+    linear-gradient(180deg, rgba(10, 10, 18, 0.55) 0%, rgba(10, 10, 18, 0.25) 45%, rgba(10, 10, 18, 0.6) 100%);
+}
+
+[data-theme='light'] .nt-veil {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.35) 0%, rgba(255, 255, 255, 0.12) 45%, rgba(255, 255, 255, 0.4) 100%);
+}
+
+/* ---------- First-run welcome (Phase 9.5) ---------- */
+
+.welcome-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 8, 14, 0.55);
+  backdrop-filter: blur(10px);
+}
+
+.welcome-card {
+  width: min(460px, 92vw);
+  padding: 36px 34px 28px;
+  border-radius: 18px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+  text-align: center;
+  direction: rtl;
+}
+
+.welcome-mark {
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  background: linear-gradient(120deg, var(--accent), #6d28d9);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  margin-bottom: 6px;
+}
+
+.welcome-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.welcome-sub {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.welcome-label {
+  margin: 22px 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  text-align: right;
+}
+
+.welcome-swatches {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.swatch {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  transition: transform 0.12s ease, border-color 0.12s ease;
+}
+
+.swatch:hover {
+  transform: scale(1.12);
+}
+
+.swatch.on {
+  border-color: #fff;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.25);
+  transform: scale(1.08);
+}
+
+.welcome-google {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  height: 44px;
+  margin-top: 22px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.welcome-google:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.welcome-note {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.welcome-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.welcome-skip,
+.welcome-start {
+  flex: 1;
+  height: 42px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.welcome-skip {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.welcome-start {
+  background: var(--accent);
+  color: #fff;
+}
+
+.welcome-start:hover {
+  filter: brightness(1.08);
 }
 
 .wordmark {
@@ -661,23 +886,33 @@ input:focus-visible,
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
-  margin: 16px 0 8px;
+  margin: 18px 0 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 6px;
 }
 
 .settings-tab {
-  background: var(--panel-raised);
+  background: transparent;
   color: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 7px 16px;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
   font-size: 13px;
   cursor: pointer;
+  font-weight: 600;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.settings-tab:hover {
+  color: var(--text);
+  background: var(--hover);
 }
 
 .settings-tab.on {
-  color: var(--text);
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  color: #fff;
+  background: var(--accent);
 }
 
 .search-input {

@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import '../common/theme.css'
+import { applyAccent } from '../common/accent'
 import './menu.css'
 import { send, subscribe, type AppState } from '../common/bridge'
 import { buildMenuRows } from './menuItems'
@@ -119,7 +120,7 @@ function MenuPage() {
   // inside the expanded area next to the hovered row — never clipped.
   const [sub, setSub] = useState<{ title: string; items: MenuRow[]; top: number } | null>(null)
   const closeTimer = useRef<number | null>(null)
-  useEffect(() => subscribe(setState), [])
+  useEffect(() => subscribe((s2) => { setState(s2); applyAccent(s2) }), [])
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') void send({ type: 'closeAppMenu' }).catch(() => {})

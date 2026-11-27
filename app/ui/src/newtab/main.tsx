@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import '../common/theme.css'
-import { send, subscribe, type AppState, type QuickLink } from '../common/bridge'
+import {
+  send,
+  subscribe,
+  type AppState,
+  type QuickLink,
+} from '../common/bridge'
+import { accentOf, applyAccent } from '../common/accent'
 
 const DEFAULT_LINKS: QuickLink[] = [
   { title: 'ويكيبيديا', url: 'https://ar.wikipedia.org' },
@@ -62,10 +68,36 @@ const tileGradient = (url: string) => {
   }
 }
 
+// Daily nature wallpaper: the calendar day picks the scene (like Edge/Brave
+// daily wallpapers, but bundled — zero network, zero tracking).
+const WALLPAPERS = [
+  'mountains-sunset.svg',
+  'lake-dawn.svg',
+  'aurora-night.svg',
+  'forest-mist.svg',
+  'desert-dunes.svg',
+  'ocean-cliff.svg',
+]
+const wallpaperOf = () => {
+  const day = Math.floor(Date.now() / 86400000)
+  return `wallpapers/${WALLPAPERS[day % WALLPAPERS.length]}`
+}
+
+// Phase 9.5: first-run theme picker (accent colors).
+const ACCENT_CHOICES = [
+  { color: '#8b5cf6', name: 'بنفسجي' },
+  { color: '#3b82f6', name: 'أزرق' },
+  { color: '#10b981', name: 'أخضر' },
+  { color: '#ef4444', name: 'أحمر' },
+  { color: '#f59e0b', name: 'عنبري' },
+  { color: '#ec4899', name: 'وردي' },
+]
+
 function App() {
   // Phase 7: follow the app theme (dark default) on <html data-theme>.
   useEffect(() => {
     return subscribe((s2) => {
+      applyAccent(s2)
       document.documentElement.setAttribute(
         'data-theme',
         s2.lightTheme ? 'light' : 'dark',
@@ -77,6 +109,10 @@ function App() {
   const [editing, setEditing] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [draftLinks, setDraftLinks] = useState<QuickLink[]>([])
+  const [welcome, setWelcome] = useState<'loading' | 'show' | 'done'>(
+    'loading',
+  )
+  const [pickedAccent, setPickedAccent] = useState<string>('')
 
   useEffect(
     () =>
@@ -95,6 +131,31 @@ function App() {
     if (url.trim()) go({ type: 'navigate', url })
   }
 
+  // Phase 9.5: first-run wizard — show once until the user picks a theme
+  // (or skips). Reads/writes the persisted 'onboarded' flag via the bridge.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const accent = await send({ type: 'getSetting', key: 'accent' })
+        if (typeof accent === 'string' && accent.startsWith('#'))
+          setPickedAccent(accent)
+        const onboarded = await send({ type: 'getSetting', key: 'onboarded' })
+        setWelcome(onboarded === '1' ? 'done' : 'show')
+      } catch {
+        setWelcome('done')
+      }
+    })()
+  }, [])
+
+  const finishWelcome = (accent: string) => {
+    if (accent) go({ type: 'setSetting', key: 'accent', value: accent })
+    go({ type: 'setSetting', key: 'onboarded', value: '1' })
+    setPickedAccent(accent || pickedAccent)
+    setWelcome('done')
+  }
+
+  const currentAccent = pickedAccent || accentOf(state)
+
   if (!state) return <div className="newtab-root" />
 
   const links = state.quickLinks.length ? state.quickLinks : DEFAULT_LINKS
@@ -105,7 +166,64 @@ function App() {
   }
 
   return (
-    <div className="newtab-root">
+    <div className="newtab-root" style={{ backgroundImage: `url(${wallpaperOf()})` }}>
+      <div className="nt-veil" aria-hidden="true" />
+
+      {welcome === 'show' && (
+        <div className="welcome-overlay" role="dialog" aria-label="الترحيب">
+          <div className="welcome-card">
+            <div className="welcome-mark">DASK</div>
+            <div className="welcome-title">مرحباً بك في متصفح <bdi>DASK</bdi></div>
+            <div className="welcome-sub">
+              متصفح سريع يعتمد الخصوصية، مبني على محرك Chromium — اختر لونك
+              المفضل وسنمضي بك.
+            </div>
+
+            <div className="welcome-label">اختر لون الثيم</div>
+            <div className="welcome-swatches">
+              {ACCENT_CHOICES.map((c) => (
+                <button
+                  key={c.color}
+                  className={
+                    'swatch' + (currentAccent === c.color ? ' on' : '')
+                  }
+                  style={{ background: c.color }}
+                  title={c.name}
+                  aria-label={c.name}
+                  onClick={() => {
+                    setPickedAccent(c.color)
+                    applyAccent({ ...state, accent: c.color } as AppState)
+                  }}
+                />
+              ))}
+            </div>
+
+            <button className="welcome-google" disabled title="قريباً — يمكنك دائماً تسجيل الدخول إلى مواقعك مثل Google من داخل المتصفح كالمعتاد">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                <path fill="#EA4335" d="M12 10.2v3.9h5.4c-.2 1.4-1.7 4.1-5.4 4.1-3.3 0-5.9-2.7-5.9-6.2S8.7 5.8 12 5.8c1.9 0 3.1.8 3.9 1.5l2.7-2.6C16.9 3.2 14.7 2.2 12 2.2 6.6 2.2 2.2 6.6 2.2 12S6.6 21.8 12 21.8c5.7 0 9.4-4 9.4-9.6 0-.7-.1-1.2-.2-1.7H12z" transform="scale(.85) translate(2,2)"/>
+              </svg>
+              الدخول بحساب Google
+            </button>
+            <div className="welcome-note">
+              تسجيل الدخول بحساب Google سيتوفر في تحديث قادم — يمكنك الآن
+              تسجيل الدخول إلى مواقعك كالمعتاد.
+            </div>
+
+            <div className="welcome-actions">
+              <button className="welcome-skip" onClick={() => finishWelcome('')}>
+                تخطي
+              </button>
+              <button
+                className="welcome-start"
+                onClick={() => finishWelcome(currentAccent)}
+              >
+                ابدأ التصفح
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="wordmark">DASK</div>
 
       <div className="search-wrap">

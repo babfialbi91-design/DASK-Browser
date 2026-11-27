@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import '../common/theme.css'
+import { applyAccent } from '../common/accent'
 import '../menu/menu.css'
 import { send, subscribe, type AppState, type TabState } from '../common/bridge'
 
@@ -94,6 +95,7 @@ function App() {
   // Phase 7: follow the app theme (dark default) on <html data-theme>.
   useEffect(() => {
     return subscribe((s2) => {
+      applyAccent(s2)
       document.documentElement.setAttribute(
         'data-theme',
         s2.lightTheme ? 'light' : 'dark',

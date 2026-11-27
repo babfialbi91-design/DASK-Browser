@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="osky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0e3a5c"/>
+      <stop offset=".45" stop-color="#2a7ba8"/>
+      <stop offset=".75" stop-color="#7cc3d9"/>
+      <stop offset="1" stop-color="#cdeef2"/>
+    </linearGradient>
+    <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2e8ba8"/>
+      <stop offset=".5" stop-color="#1b6a8c"/>
+      <stop offset="1" stop-color="#0d3f5c"/>
+    </linearGradient>
+    <linearGradient id="cliff" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4a3a33"/>
+      <stop offset="1" stop-color="#241b17"/>
+    </linearGradient>
+  </defs>
+  <rect width="1920" height="620" fill="url(#osky)"/>
+  <g fill="#ffffff" opacity=".8">
+    <ellipse cx="380" cy="140" rx="170" ry="22"/>
+    <ellipse cx="500" cy="168" rx="120" ry="16"/>
+    <ellipse cx="1420" cy="110" rx="200" ry="24"/>
+    <ellipse cx="1560" cy="140" rx="140" ry="18"/>
+  </g>
+  <rect y="620" width="1920" height="460" fill="url(#sea)"/>
+  <g stroke="#dff3f5" stroke-width="4" fill="none" opacity=".7">
+    <path d="M0 660 Q240 648 480 662 T960 658 T1440 664 T1920 658"/>
+    <path d="M0 740 Q300 728 600 744 T1200 738 T1920 746" opacity=".5"/>
+    <path d="M0 860 Q360 845 720 864 T1440 858 T1920 866" opacity=".4"/>
+    <path d="M0 1000 Q420 985 840 1004 T1680 998 T1920 1006" opacity=".35"/>
+  </g>
+  <g fill="#ffffff" opacity=".5">
+    <ellipse cx="300" cy="672" rx="90" ry="6"/>
+    <ellipse cx="1200" cy="700" rx="120" ry="7"/>
+    <ellipse cx="760" cy="920" rx="140" ry="8"/>
+  </g>
+  <path fill="url(#cliff)" d="M1920 220 L1920 1080 L1380 1080 Q1500 800 1540 640 Q1580 470 1660 380 Q1760 260 1920 220 Z"/>
+  <g fill="#0d5c46">
+    <path d="M1700 330 l24-80 24 80 z"/><path d="M1760 310 l30-96 30 96 z"/>
+    <path d="M1820 290 l26-84 26 84 z"/><path d="M1580 430 l22-70 22 70 z"/>
+    <path d="M1640 400 l26-84 26 84 z"/>
+  </g>
+  <g fill="#ffffff" opacity=".85">
+    <path d="M240 320 q10 -14 20 0 q-10 -5 -20 0z"/>
+    <path d="M300 350 q8 -11 16 0 q-8 -4 -16 0z"/>
+    <path d="M520 280 q9 -12 18 0 q-9 -5 -18 0z"/>
+  </g>
+</svg>

@@ -188,6 +188,7 @@ class TabManager {
   // Reads one boolean/string preference synchronously (pre-CEF or pre-DB
   // thread). Returns "" when unset.
   static std::string ReadPrefString(const std::string& key);
+  void SetPrefString(const std::string& key, const std::string& value);  // Phase 9.5
   static bool force_private() { return force_private_; }
 
   // Phase 8: launch configuration parsed from the command line before CEF
@@ -388,6 +389,7 @@ class TabManager {
   static bool launch_app_;    // Phase 8: --app <url> chromeless window
   static std::wstring launch_url_;  // Phase 8: --app / bare-URL launch target
   bool light_theme_ = false;  // Phase 7: UI theme (false = dark, default)
+  std::string accent_ = "#8b5cf6";  // Phase 9.5: user accent color
   std::string dns_resolver_;  // Phase 7.5: DoH provider (empty = system default)
 
   // Active downloads: CEF id -> callback used for cancel (CEF UI thread).
