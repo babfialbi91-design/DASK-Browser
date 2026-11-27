@@ -305,12 +305,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
       }, 0);
       return 0;
     case WM_DASK_MENU_WIDE: {
-      // Phase 7.5: expand/shrink the popup for the hover flyout. The menu
-      // column stays at the right edge (RTL); the flyout area extends to
-      // the right, over the page. Values are passed through the LPARAM so
-      // the EnumWindows lambda stays capture-free (WNDENUMPROC).
-      struct WideCtx { HWND main; int target; int height; };
-      WideCtx ctx{hwnd, wparam ? 620 : 300, 600};
+      // Phase 7.5: show the hover flyout beside the menu column. The window
+      // expands to the right, and is clipped (SetWindowRgn) so ONLY the menu
+      // column and the flyout panel are visible — the rest is fully
+      // transparent, nothing shows over the page except the panels.
+      // lparam packs the flyout rect: LOWORD=top, HIWORD=height.
+      const int top = LOWORD(lparam);
+      const int fly_h = HIWORD(lparam);
+      struct WideCtx { HWND main; int wide; int top; int fly_h; };
+      WideCtx ctx{hwnd, static_cast<int>(wparam), top, fly_h};
       ::EnumWindows([](HWND w, LPARAM lp) -> BOOL {
         auto* c = reinterpret_cast<WideCtx*>(lp);
         wchar_t cls[64] = {};
@@ -319,13 +322,41 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             ::GetWindow(w, GW_OWNER) == c->main) {
           RECT rc;
           ::GetWindowRect(w, &rc);
-          ::SetWindowPos(w, nullptr, rc.left, rc.top, c->target, c->height,
+          if (!c->wide) {
+            // Back to the plain 300px menu column, no clipping.
+            ::SetWindowPos(w, nullptr, rc.left, rc.top, 300, 600,
+                           SWP_NOZORDER | SWP_NOACTIVATE);
+            if (HWND chrome = ::FindWindowExW(w, nullptr, L"Chrome_WidgetWin_1",
+                                              nullptr)) {
+              ::SetWindowPos(chrome, nullptr, 0, 0, 300, 600,
+                             SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+            ::SetWindowRgn(w, nullptr, TRUE);
+            return TRUE;
+          }
+          // Window tall enough for the flyout even at the lowest row.
+          const int needed = c->fly_h > 0 ? c->top + c->fly_h + 10 : 0;
+          const int target_h = needed > 600 ? needed : 600;
+          ::SetWindowPos(w, nullptr, rc.left, rc.top, 620, target_h,
                          SWP_NOZORDER | SWP_NOACTIVATE);
           if (HWND chrome = ::FindWindowExW(w, nullptr, L"Chrome_WidgetWin_1",
                                             nullptr)) {
-            ::SetWindowPos(chrome, nullptr, 0, 0, c->target, c->height,
+            ::SetWindowPos(chrome, nullptr, 0, 0, 620, target_h,
                            SWP_NOZORDER | SWP_NOACTIVATE);
           }
+          // Clip to: menu column (0..300, full height) + flyout panel
+          // (298..598 at the hovered row — 2px overlap so the mouse never
+          // crosses a dead zone).
+          HRGN menu_rgn = ::CreateRectRgn(0, 0, 300, target_h);
+          if (c->fly_h > 0) {
+            const int fly_bottom = c->top + c->fly_h;
+            const int bottom = fly_bottom < target_h ? fly_bottom : target_h;
+            HRGN fly_rgn = ::CreateRectRgn(298, c->top, 598, bottom);
+            ::CombineRgn(menu_rgn, menu_rgn, fly_rgn, RGN_OR);
+            ::DeleteObject(fly_rgn);
+          }
+          ::SetWindowRgn(w, menu_rgn, TRUE);
+          // SetWindowRgn takes ownership of the region on success.
         }
         return TRUE;
       }, reinterpret_cast<LPARAM>(&ctx));

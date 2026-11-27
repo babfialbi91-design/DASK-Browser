@@ -49,7 +49,7 @@ constexpr UINT WM_DASK_DESTROY_HOST = WM_APP + 0x114; // wParam: tab id
 constexpr UINT WM_DASK_MENU_HOST = WM_APP + 0x115;   // Phase 7: create menu popup host, returns HWND
 constexpr UINT WM_DASK_MENU_CLOSED = WM_APP + 0x116; // Phase 7: menu popup deactivated/closed
 constexpr UINT WM_DASK_DESTROY_MENU_HOST = WM_APP + 0x117; // Phase 7: destroy popup on its owning thread
-constexpr UINT WM_DASK_MENU_WIDE = WM_APP + 0x118;         // Phase 7.5: expand/shrink popup (wparam=1/0)
+constexpr UINT WM_DASK_MENU_WIDE = WM_APP + 0x118; // Phase 7.5: flyout clip (wparam=wide, lparam= top | height<<16)
 
 // Height of the React toolbar region (tab strip + nav bar), CSS px.
 constexpr int kUiToolbarHeight = 84;
@@ -191,7 +191,7 @@ class TabManager {
   void CloseAppMenu();           // Phase 7: close it (deactivate/toggle)
   void ToggleAppMenu();          // Phase 7: hamburger button
   void OnMenuDeactivated();      // Phase 7: popup lost activation (Win32 thread)
-  void ResizeMenuPopup(bool wide);  // Phase 7.5: expand for the flyout
+  void ResizeMenuPopup(bool wide, int top = 0, int height = 0);  // Phase 7.5
   void ShowAppMenuInternal();    // CEF UI thread
   void CloseAppMenuInternal();   // CEF UI thread
   void OnMenuBrowserCreated(CefRefPtr<CefBrowser> browser);

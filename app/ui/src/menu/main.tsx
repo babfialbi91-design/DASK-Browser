@@ -147,6 +147,20 @@ function MenuPage() {
     void send({ type: 'closeAppMenu' }).catch(() => {})
   }
 
+  // Report the measured flyout rect so the native side can clip the popup
+  // window to exactly the menu column + this panel (nothing else shows).
+  useEffect(() => {
+    if (!sub) return
+    const fly = document.querySelector('.menu-flyout') as HTMLElement | null
+    if (!fly) return
+    void send({
+      type: 'resizeMenuPopup',
+      wide: true,
+      top: fly.offsetTop,
+      height: fly.offsetHeight,
+    }).catch(() => {})
+  }, [sub])
+
   if (!state) return <div className="menu-page" />
   const rows = buildMenuRows({ state, go: send, close })
 

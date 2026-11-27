@@ -452,7 +452,8 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
     } else if (type == "viewSource") {
       mgr_->ViewSourceActive();
     } else if (type == "resizeMenuPopup") {
-      mgr_->ResizeMenuPopup(dict->GetBool("wide"));
+      mgr_->ResizeMenuPopup(dict->GetBool("wide"), dict->GetInt("top"),
+                            dict->GetInt("height"));
     } else if (type == "setQuickLinks") {
       CefRefPtr<CefListValue> list = dict->GetList("links");
       if (list && list->GetSize() <= 24) {
@@ -2087,13 +2088,17 @@ void TabManager::ToggleAppMenu() {
   });
 }
 
-void TabManager::ResizeMenuPopup(bool wide) {
-  // Phase 7.5: expand the popup to the right (over the page area) so the
-  // hover flyout renders inside the window instead of being clipped.
-  PostToCef([this, wide]() {
+void TabManager::ResizeMenuPopup(bool wide, int top, int height) {
+  // Phase 7.5: expand the popup beside the menu column for the hover flyout.
+  // top/height describe the flyout's page rect so the Win32 thread can clip
+  // the window (SetWindowRgn) to just the menu column + the flyout panel.
+  PostToCef([this, wide, top, height]() {
     if (!menu_open_ || !menu_popup_hwnd_) return;
+    const LPARAM lp =
+        static_cast<LPARAM>((static_cast<unsigned>(top) & 0xFFFF) |
+                            (static_cast<unsigned>(height) << 16));
     ::PostMessageW(main_hwnd_, WM_DASK_MENU_WIDE,
-                   wide ? 1 : 0, 0);
+                   wide ? 1 : 0, lp);
   });
 }
 

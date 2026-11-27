@@ -199,9 +199,10 @@
 .menu-flyout {
   position: absolute;
   /* The popup anchors at the main window's left edge and expands to the
-     right when a submenu opens, so the flyout panel sits immediately to
-     the RIGHT of the 300px menu column — beside the menu, not on top of it. */
-  left: calc(100% + 6px);
+     right when a submenu opens; the window itself is clipped (SetWindowRgn)
+     so only this panel and the menu column show. 2px overlap with the
+     column keeps the mouse path inside the window region. */
+  left: calc(100% - 2px);
   width: 300px;
   padding: 5px;
   background: var(--panel-raised);
