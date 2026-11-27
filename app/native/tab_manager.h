@@ -53,6 +53,7 @@ constexpr UINT WM_DASK_DESTROY_MENU_HOST = WM_APP + 0x117; // Phase 7: destroy p
 constexpr UINT WM_DASK_MENU_WIDE = WM_APP + 0x118; // Phase 7.5: flyout clip (wparam=wide, lparam= top | height<<16)
 constexpr UINT WM_DASK_DRAG = WM_APP + 0x119;      // Phase 9: start a caption drag (drag region in the tab strip)
 constexpr UINT WM_DASK_WINDOWCTL = WM_APP + 0x11A; // Phase 9: wparam 0=min 1=max/restore 2=close
+constexpr UINT WM_DASK_KICK = WM_APP + 0x11B;      // Phase 9.6: force re-render of CEF hosts after restore
 
 // Height of the React toolbar region (tab strip + nav bar), CSS px.
 constexpr int kUiToolbarHeight = 84;
@@ -268,6 +269,10 @@ class TabManager {
   void ClearCookiesFor(const std::wstring& site);   // CEF UI thread
   void ClearAllCookies();                           // CEF UI thread
   void UpdateFilterLists();                         // CEF UI thread
+  // Phase 9.6: automatic app updates (GitHub release check).
+  void CheckAppUpdate(bool manual);
+  void UpdateAvailable(std::string tag, std::string url, bool available,
+                       bool failed);
   // Site the user is browsing (top-level host of the tab, CEF UI thread).
   std::wstring TabSiteHost(int64_t tab_id);
   // Current tab title (CEF UI thread; used when recording history).
@@ -390,6 +395,7 @@ class TabManager {
   static std::wstring launch_url_;  // Phase 8: --app / bare-URL launch target
   bool light_theme_ = false;  // Phase 7: UI theme (false = dark, default)
   std::string accent_ = "#8b5cf6";  // Phase 9.5: user accent color
+  std::string onboarded_;  // Phase 9.5: first-run wizard done flag (memory copy)
   std::string dns_resolver_;  // Phase 7.5: DoH provider (empty = system default)
 
   // Active downloads: CEF id -> callback used for cancel (CEF UI thread).

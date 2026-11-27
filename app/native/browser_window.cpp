@@ -330,8 +330,42 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
       ::PostMessageW(hwnd, WM_SYSCOMMAND, cmd, 0);
       return 0;
     }
+    case WM_DASK_KICK: {
+      // Phase 9.6: Chrome_WidgetWin (the CEF child) sometimes keeps a
+      // stale surface after minimize/restore. Force a full paint by
+      // invalidating both the host and its Chrome child.
+      for (auto& [id, host] : g_hosts) {
+        (void)id;
+        if (!host) continue;
+        ::InvalidateRect(host, nullptr, TRUE);
+        HWND chrome = ::FindWindowExW(host, nullptr, L"Chrome_WidgetWin_1", nullptr);
+        if (!chrome)
+          chrome = ::FindWindowExW(host, nullptr, L"Chrome_WidgetWin_0", nullptr);
+        if (chrome) {
+          RECT rc;
+          if (::GetClientRect(chrome, &rc)) {
+            const int w = rc.right - rc.left;
+            const int h = rc.bottom - rc.top;
+            // Nudge by 1px then back: Chromium re-lays out and re-paints the
+            // whole surface, repairing the blank after minimize/restore.
+            ::SetWindowPos(chrome, nullptr, 0, 0, w, h - 1,
+                           SWP_NOZORDER | SWP_NOACTIVATE);
+            ::SetWindowPos(chrome, nullptr, 0, 0, w, h,
+                           SWP_NOZORDER | SWP_NOACTIVATE);
+          }
+          ::InvalidateRect(chrome, nullptr, TRUE);
+        }
+      }
+      return 0;
+    }
     case WM_SIZE: {
       if (wparam != SIZE_MINIMIZED) DoLayout();
+      // Phase 9.6: after restore/maximize Chromium's embedded child windows
+      // can come back with a broken (partially blank) surface. Nudge every
+      // host child by 1px on the next loop pass to force a full re-render.
+      if (wparam == SIZE_RESTORED || wparam == SIZE_MAXIMIZED) {
+        ::PostMessageW(hwnd, WM_DASK_KICK, 0, 0);
+      }
       return 0;
     }
     case WM_CLOSE: {
@@ -544,7 +578,38 @@ int RunBrowserWindow(HINSTANCE h_instance, int n_cmd_show) {
       .FromWString(exe_dir + L"\\dask_browser_subprocess.exe");
   CefString(&settings.resources_dir_path).FromWString(exe_dir);
   CefString(&settings.locales_dir_path).FromWString(exe_dir + L"\\locales");
-  // cache_path left empty: no profile data is stored (no passwords, history).
+  // Phase 9.6: persistent HTTP cache — pages/JS/images served from disk on
+  // repeat visits (huge perceived speed-up). Normal windows share the
+  // profile cache; --private windows get a per-process cache dir that is
+  // wiped on next private launch (nothing persists from private browsing).
+  {
+    wchar_t appdata[MAX_PATH] = {};
+    std::wstring base;
+    if (SUCCEEDED(::SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0,
+                                     appdata))) {
+      base = std::wstring(appdata) + L"\\DaskBrowser";
+    }
+    if (!base.empty()) {
+      if (TabManager::force_private()) {
+        const std::wstring pc = base + L"\\cef_root\\p" +
+                                std::to_wstring(::GetCurrentProcessId()) +
+                                L"\\cache";
+        // Private launch: drop any leftover cache before CEF opens it.
+        SHFILEOPSTRUCTW op = {};
+        std::wstring from = pc;
+        from.push_back(L'\0');
+        op.hwnd = nullptr;
+        op.wFunc = FO_DELETE;
+        op.pFrom = from.c_str();
+        op.fFlags = FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT;
+        ::SHFileOperationW(&op);
+        CefString(&settings.cache_path).FromWString(pc);
+      } else {
+        CefString(&settings.cache_path)
+            .FromWString(base + L"\\profiles\\profile\\cef_cache");
+      }
+    }
+  }
   settings.multi_threaded_message_loop = true;  // CEF runs its own loop thread.
   // Phase 8: CEF 120+ enforces a process singleton lock on root_cache_path
   // (an empty value falls back to the SHARED default dir, so a second DASK

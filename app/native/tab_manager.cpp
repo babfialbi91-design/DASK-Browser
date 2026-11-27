@@ -484,8 +484,10 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
         callback->Failure(403, "unknown setting key");
         return true;
       }
+      // Read from the in-memory copy: a synchronous SQLite read here would
+      // race the DB thread's connection and silently fail (empty value).
       if (type == "getSetting") {
-        callback->Success(mgr_->ReadPrefString(key));
+        callback->Success(key == "accent" ? mgr_->accent_ : mgr_->onboarded_);
       } else {
         const std::string value = dict->GetString("value").ToString();
         if (value.size() > 64) {
@@ -493,9 +495,10 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
           return true;
         }
         mgr_->SetPrefString(key, value);
-        if (key == "accent" && mgr_->accent_ != value) {
-          mgr_->accent_ = value;
-          mgr_->PushUiEvent();
+        if (key == "accent") {
+          if (mgr_->accent_ != value) { mgr_->accent_ = value; mgr_->PushUiEvent(); }
+        } else if (key == "onboarded") {
+          mgr_->onboarded_ = value;
         }
       }
     } else if (type == "resizeMenuPopup") {
@@ -948,6 +951,7 @@ void TabManager::Start() {
       prefs.GetBool("lightTheme", false, &light_theme_, &db_err);
       prefs.GetString("accent", "", &accent_, &db_err);
       if (accent_.empty() || accent_[0] != '#') accent_ = "#8b5cf6";
+      prefs.GetString("onboarded", "", &onboarded_, &db_err);
     }
   }
 
@@ -3114,6 +3118,7 @@ void TabManager::PerformProfileSwitch() {
       prefs.GetBool("lightTheme", false, &light_theme_, &db_err);
       prefs.GetString("accent", "", &accent_, &db_err);
       if (accent_.empty() || accent_[0] != '#') accent_ = "#8b5cf6";
+      prefs.GetString("onboarded", "", &onboarded_, &db_err);
     }
   }
   bool has_session = false;
