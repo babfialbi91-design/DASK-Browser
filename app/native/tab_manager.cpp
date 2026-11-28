@@ -1435,11 +1435,14 @@ void TabManager::CreateTab(std::wstring url, bool private_tab) {
       context = private_context_;
     } else {
       // Phase 5: the active profile gets an isolated CEF request context
-      // (cookies/cache under profiles/<id>/cef_cache).
+      // (cookies/cache under the active root, per profile — see profiles.h).
+      // Pre-create the cache dir: a failed CEF-side profile creation at
+      // first-tab time logs "Cannot create profile" and can fail-fast.
       if (!profile_context_) {
+        const std::wstring cache_dir = profile_store_->cef_cache_dir();
+        ::SHCreateDirectoryExW(nullptr, cache_dir.c_str(), nullptr);
         CefRequestContextSettings ctx_settings;
-        CefString(&ctx_settings.cache_path)
-            .FromWString(profile_store_->cef_cache_dir());
+        CefString(&ctx_settings.cache_path).FromWString(cache_dir);
         profile_context_ = CefRequestContext::CreateContext(ctx_settings, nullptr);
         RegisterUiSchemeHandlerOnContext(profile_context_);
       }
@@ -2550,7 +2553,7 @@ std::string HostOf(const std::wstring& wurl) {
 std::string FillerScript(const std::string& host) {
   std::string js = R"js((function(){
   var HOST = )js";
-  js += CefString(""" + host + """);
+  js += "\"" + host + "\"";
   js += R"js(;
   function q(type, data, cb){
     if(!window.cefQuery) return;

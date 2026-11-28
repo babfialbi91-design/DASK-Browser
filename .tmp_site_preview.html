@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DASK Browser — متصفح سريع يحترم خصوصيتك</title>
+<meta name="description" content="متصفح DASK: متصفح ويندوز مستقل مبني على محرك Chromium (CEF) — حجب إعلانات ومتتبعات، نوافذ خاصة، مدير كلمات مرور محلي، إضافات، وواجهة عربية أنيقة.">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'unsafe-inline'; connect-src https://api.github.com; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+<style>
+:root{
+  --bg:#000;--panel:#0a0a0a;--panel2:#101010;--border:#242424;
+  --text:#fff;--muted:#8a8a8a;--line:rgba(255,255,255,.08);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',Tahoma,sans-serif;line-height:1.7;overflow-x:hidden}
+a{color:inherit;text-decoration:none}
+.wrap{max-width:1100px;margin:0 auto;padding:0 24px}
+.reveal{opacity:0;transform:translateY(26px);transition:opacity .8s cubic-bezier(.2,.7,.2,1),transform .8s cubic-bezier(.2,.7,.2,1)}
+.reveal.in{opacity:1;transform:none}
+
+/* header */
+header{position:fixed;top:0;right:0;left:0;z-index:50;background:rgba(0,0,0,.75);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+nav{display:flex;align-items:center;gap:22px;height:64px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:19px;letter-spacing:.05em}
+.brand .logo{width:30px;height:30px;border-radius:9px;background:#fff;color:#000;display:grid;place-items:center;font-size:15px;font-weight:900;transition:transform .35s cubic-bezier(.34,1.56,.64,1)}
+.brand:hover .logo{transform:rotate(-8deg) scale(1.08)}
+nav .links{display:flex;gap:22px;margin-inline-start:auto;color:var(--muted);font-size:14px}
+nav .links a{position:relative;transition:color .2s}
+nav .links a::after{content:'';position:absolute;bottom:-4px;inset-inline-start:0;width:0;height:1.5px;background:#fff;transition:width .25s}
+nav .links a:hover{color:#fff}
+nav .links a:hover::after{width:100%}
+.dl-mini{background:#fff;color:#000;padding:8px 20px;border-radius:10px;font-size:13px;font-weight:800;transition:.2s}
+.dl-mini:hover{background:transparent;color:#fff;outline:1px solid #fff}
+
+/* hero */
+.hero{position:relative;padding:160px 0 80px;text-align:center;overflow:hidden}
+.hero::before{content:'';position:absolute;inset:-30%;background:
+  radial-gradient(640px 380px at 50% -10%,rgba(255,255,255,.09),transparent 60%);
+  z-index:-1}
+.hero .tag{display:inline-block;font-size:12px;letter-spacing:.14em;color:var(--muted);border:1px solid var(--border);border-radius:30px;padding:6px 18px;margin-bottom:26px;transition:.25s}
+.hero .tag:hover{border-color:#666;color:#ccc}
+.hero h1{font-size:clamp(36px,6.5vw,62px);font-weight:800;line-height:1.28;letter-spacing:-.01em}
+.hero h1 .w{color:#fff}
+.hero h1 .dim{color:#3c3c3c}
+.hero p{max-width:620px;margin:20px auto 34px;color:var(--muted);font-size:16.5px}
+.hero .cta{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:10px;padding:14px 32px;border-radius:12px;font-weight:800;font-size:15px;cursor:pointer;border:1px solid var(--border);background:var(--panel);transition:.2s}
+.btn.primary{background:#fff;color:#000;border-color:#fff}
+.btn.primary:hover{transform:translateY(-2px);box-shadow:0 12px 40px rgba(255,255,255,.18)}
+.btn.primary .dl-arrow{transition:transform .25s}
+.btn.primary:hover .dl-arrow{transform:translateY(3px)}
+.btn.ghost:hover{border-color:#fff;color:#fff}
+.hero .meta{margin-top:16px;color:#555;font-size:12.5px;letter-spacing:.06em}
+
+/* staggered hero entrance */
+@keyframes heroUp{from{opacity:0;transform:translateY(30px)}to{opacity:1;transform:none}}
+.hero .tag,.hero h1,.hero p,.hero .cta,.hero .meta,.shot-wrap{animation:heroUp .9s cubic-bezier(.2,.7,.2,1) both}
+.hero .tag{animation-delay:.05s}.hero h1{animation-delay:.15s}.hero p{animation-delay:.28s}
+.hero .cta{animation-delay:.4s}.hero .meta{animation-delay:.5s}.shot-wrap{animation-delay:.62s}
+
+/* app screenshot */
+.shot-wrap{margin:70px auto 0;max-width:940px;position:relative}
+.shot-wrap::before{content:'';position:absolute;inset:-60px;background:radial-gradient(500px 300px at 50% 40%,rgba(255,255,255,.10),transparent 70%);z-index:-1}
+.shot{width:100%;border-radius:14px;border:1px solid #2a2a2a;box-shadow:0 40px 120px rgba(0,0,0,.9),0 0 0 1px rgba(255,255,255,.06);display:block;transform:perspective(1400px) rotateX(4deg);transition:transform .6s cubic-bezier(.2,.7,.2,1)}
+.shot:hover{transform:perspective(1400px) rotateX(0)}
+
+/* marquee */
+.strip{border-block:1px solid var(--line);padding:18px 0;overflow:hidden;white-space:nowrap;background:var(--panel)}
+.strip .inner{display:inline-block;animation:slide 26s linear infinite;color:#3a3a3a;font-weight:800;letter-spacing:.22em;font-size:13px}
+.strip:hover .inner{animation-play-state:paused}
+.strip b{color:#fff;margin:0 18px}
+@keyframes slide{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+
+/* sections */
+section{padding:90px 0}
+.sec-head{text-align:center;margin-bottom:50px}
+.sec-head h2{font-size:clamp(26px,4vw,38px);font-weight:800}
+.sec-head h2 .dim{color:#3c3c3c}
+.sec-head p{color:var(--muted);margin-top:10px;max-width:560px;margin-inline:auto}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:2px;background:var(--line);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+.card{background:var(--panel);padding:30px 24px;transition:background .25s,transform .25s;position:relative;overflow:hidden}
+.card::before{content:'';position:absolute;top:0;inset-inline:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.5),transparent);opacity:0;transition:opacity .3s}
+.card:hover::before{opacity:1}
+.card:hover{background:var(--panel2);transform:translateZ(0) scale(1.015)}
+.card .num{font-size:12px;color:#3a3a3a;font-weight:800;letter-spacing:.15em;margin-bottom:14px;transition:color .3s}
+.card:hover .num{color:#8a8a8a}
+.card h3{font-size:16px;margin-bottom:8px}
+.card p{color:var(--muted);font-size:13.5px}
+
+/* tech rows */
+.tech{border:1px solid var(--line);border-radius:16px;overflow:hidden}
+.trow{display:grid;grid-template-columns:120px 1fr;gap:18px;padding:22px 26px;border-bottom:1px solid var(--line);transition:background .2s;align-items:baseline}
+.trow:last-child{border-bottom:none}
+.trow:hover{background:var(--panel)}
+.trow .badge{font-size:11px;color:var(--muted);letter-spacing:.12em;text-transform:uppercase}
+.trow b{font-size:14.5px}
+.trow span{display:block;color:var(--muted);font-size:13px;margin-top:4px}
+
+/* download */
+#download{text-align:center;background:
+  radial-gradient(700px 300px at 50% 120%,rgba(255,255,255,.07),transparent 70%)}
+#download .rel-card{max-width:560px;margin:34px auto 0;background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:34px 30px;transition:.2s}
+#download .rel-card:hover{border-color:#3a3a3a;box-shadow:0 20px 70px rgba(0,0,0,.7)}
+#download .ver{font-size:13px;color:var(--muted)}
+#download .rel-card .btn{margin-top:18px}
+#download .note{margin-top:16px;color:#555;font-size:12px}
+.steps{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-top:30px}
+.steps .s{border:1px solid var(--line);border-radius:12px;padding:14px 22px;font-size:13px;color:var(--muted);transition:.25s}
+.steps .s:hover{border-color:#3a3a3a;transform:translateY(-3px)}
+.steps .s b{color:#fff}
+
+footer{border-top:1px solid var(--line);padding:34px 0;color:#555;font-size:13px}
+footer .f{display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
+footer a{transition:color .2s}
+footer a:hover{color:#fff}
+
+@media (max-width:640px){nav .links{display:none}.trow{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.reveal{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <nav>
+    <div class="brand"><div class="logo">D</div>DASK Browser</div>
+    <div class="links">
+      <a href="#features">الميزات</a><a href="#tech">على ماذا يُبنى</a><a href="#download">تحميل</a>
+    </div>
+    <a class="dl-mini" href="#download">تحميل</a>
+  </nav>
+</div></header>
+
+<div class="hero"><div class="wrap">
+  <div class="tag">متصفح ويندوز مستقل · Chromium · بدون تتبع</div>
+  <h1><span class="w">متصفح DASK</span><br><span class="dim">سريع، خاص، وعربي أصلاً.</span></h1>
+  <p>مبني على محرك Chromium عبر CEF — يحجب الإعلانات والمتتبعات، يحترم خصوصيتك، ويمنحك مدير كلمات مرور محلياً وإضافات سكربتات — بواجهة عربية فخمة أسود وأبيض.</p>
+  <div class="cta">
+    <a class="btn primary" href="#download">
+      <svg class="dl-arrow" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3v13m0 0l-5-5m5 5l5-5M4 21h16"/></svg>
+      حمّل DASK Browser
+    </a>
+    <a class="btn ghost" href="#features">اكتشف الميزات</a>
+  </div>
+  <div class="meta">ويندوز 10/11 · 64-بت · لا يجمع أي بيانات</div>
+
+  <div class="shot-wrap">
+    <img class="shot" src="dask-app.png" alt="واجهة متصفح DASK — شريط تبويبات مدمج وصفحة تبويب جديد بخلفية طبيعية" loading="eager" decoding="async">
+  </div>
+</div></div>
+
+<div class="strip"><div class="inner">
+  الخصوصية أولاً <b>◆</b> حجب إعلانات ومتتبعات <b>◆</b> نوافذ خاصة حقيقية <b>◆</b> كلمات مرور محلية مشفرة <b>◆</b> إضافات سكربتات <b>◆</b> عربي RTL أصلي <b>◆</b> مناظر طبيعية يومية <b>◆</b> Chromium <b>◆</b> تحديث تلقائي <b>◆</b>
+  الخصوصية أولاً <b>◆</b> حجب إعلانات ومتتبعات <b>◆</b> نوافذ خاصة حقيقية <b>◆</b> كلمات مرور محلية مشفرة <b>◆</b> إضافات سكربتات <b>◆</b> عربي RTL أصلي <b>◆</b> مناظر طبيعية يومية <b>◆</b> Chromium <b>◆</b> تحديث تلقائي <b>◆</b>
+</div></div>
+
+<section id="features"><div class="wrap">
+  <div class="sec-head reveal"><h2><span class="w">كل ما تحتاجه</span> <span class="dim">من متصفح.</span></h2><p>ميزات حقيقية تعمل — لا أزرار وهمية.</p></div>
+  <div class="grid">
+    <div class="card reveal"><div class="num">01</div><h3>حجب إعلانات ومتتبعات</h3><p>محرك فلترة شبكي مدمج بقواعد EasyList وغيرها، تحديث تلقائي واستثناءات لكل موقع.</p></div>
+    <div class="card reveal"><div class="num">02</div><h3>كلمات مرور محلية 100%</h3><p>مدير كلمات مرور مشفّر بـ DPAPI بمفتاح حسابك على جهازك — لا مزامنة ولا خوادم، تعبئة تلقائية عند العودة.</p></div>
+    <div class="card reveal"><div class="num">03</div><h3>إضافات سكربتات</h3><p>أضف سكربتات JS تعمل على مواقع مطابقة (بنمط Tampermonkey) — تفعيل وتعطيل وحذف من الإعدادات.</p></div>
+    <div class="card reveal"><div class="num">04</div><h3>نوافذ خاصة حقيقية</h3><p>نافذة خاصة لا تحفظ أي شيء إطلاقاً: لا سجل، لا كوكيز تُكتب، ولا ملف جلسة يُلمس.</p></div>
+    <div class="card reveal"><div class="num">05</div><h3>عربي أولاً</h3><p>واجهة عربية RTL كاملة — حتى قائمة الكليك اليمين والقوائم الداخلية عربية أنيقة.</p></div>
+    <div class="card reveal"><div class="num">06</div><h3>تطبيقات مواقع</h3><p>ثبّت أي موقع كتطبيق بنافذته الخاصة في قائمة ابدأ وسطح المكتب — يفتح في DASK.</p></div>
+    <div class="card reveal"><div class="num">07</div><h3>خصوصية بلا مساومة</h3><p>لا تتبع، لا تجميع بيانات، لا سيرفرات. بياناتك في جهازك فقط وتحت سيطرتك.</p></div>
+    <div class="card reveal"><div class="num">08</div><h3>تحديث تلقائي</h3><p>فحص مجهول مرة يومياً من إصدارات GitHub — إشعار في الشريط عند وجود إصدار أحدث.</p></div>
+  </div>
+</div></section>
+
+<section id="tech"><div class="wrap">
+  <div class="sec-head reveal"><h2><span class="w">على ماذا</span> <span class="dim">يُبنى؟</span></h2><p>أساس تقني حقيقي — لا أطر جاهزة ولا اختصارات.</p></div>
+  <div class="tech reveal">
+    <div class="trow"><div class="badge">المحرك</div><div><b>Chromium عبر CEF</b><span>محرك Chromium الحديث (CEF 158) — نفس تقنية عرض الصفحات في المتصفحات الكبرى.</span></div></div>
+    <div class="trow"><div class="badge">القلب</div><div><b>C++20 / Win32</b><span>عملية متصفح أصلية: نافذة Win32، تبويبات، جسر IPC آمن عبر CefMessageRouter.</span></div></div>
+    <div class="trow"><div class="badge">الواجهة</div><div><b>React + TypeScript</b><span>شريط الأدوات والتبويبات والإعدادات واجهات React تعمل داخل CEF على نطاق dask.ui المحمي.</span></div></div>
+    <div class="trow"><div class="badge">الفلاتر</div><div><b>محرك حجب مخصص</b><span>محرك فلترة شبكي مكتوب من الصفر بـ C++، يقرر الحجب على خيط IO بأمان.</span></div></div>
+    <div class="trow"><div class="badge">التخزين</div><div><b>SQLite محلي + DPAPI</b><span>المفضلة والسجل والإعدادات محلياً، وكلمات المرور مشفرة بمفتاح ويندوز على جهازك.</span></div></div>
+    <div class="trow"><div class="badge">التحديثات</div><div><b>تحديث تلقائي من GitHub</b><span>فحص مجهول مصادرَه مرة يومياً — بلا هوية ولا بيانات، رابط تحميل يظهر لك فقط.</span></div></div>
+    <div class="trow"><div class="badge">الأمان</div><div><b>Chromium sandbox مفعّل</b><span>عمليات فرعية معزولة، sandbox كامل، وقائمة طلبات IPC بيضاء صارمة — ومحتوى الويب لا يصل لشيء إلا قناة كلمات المرور المحمية.</span></div></div>
+  </div>
+</div></section>
+
+<section id="download"><div class="wrap">
+  <div class="sec-head reveal"><h2><span class="w">حمّل</span> <span class="dim">DASK Browser</span></h2><p>مثبت رسمي من إصدارات GitHub — آخر إصدار دائماً.</p></div>
+  <div class="rel-card reveal">
+    <div class="ver" id="rel-info">جاري جلب آخر إصدار…</div>
+    <a class="btn primary" id="dl-btn" href="#" style="visibility:hidden" rel="noopener">
+      <svg class="dl-arrow" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3v13m0 0l-5-5m5 5l5-5M4 21h16"/></svg>
+      <span id="dl-btn-text">تنزيل المثبت</span>
+    </a>
+    <a class="btn ghost" id="dl-zip" href="#" style="display:none" rel="noopener">نسخة محمولة (zip)</a>
+    <div class="steps">
+      <div class="s"><b>1.</b> نزّل المثبت</div>
+      <div class="s"><b>2.</b> ثبّته</div>
+      <div class="s"><b>3.</b> أيقونة على سطح المكتب تفتح المتصفح</div>
+    </div>
+    <div class="note">اختر لون ثيمك في أول تشغيل — يمكنك تخطي تسجيل الدخول بأمان.</div>
+  </div>
+</div></section>
+
+<footer><div class="wrap"><div class="f">
+  <div>DASK Browser — متصفح يحترمك.</div>
+  <div><a href="https://github.com/babfialbi91-design/DASK-Browser" target="_blank" rel="noopener">GitHub</a> · <a href="https://github.com/babfialbi91-design/DASK-Releases" target="_blank" rel="noopener">الإصدارات</a></div>
+</div></div></footer>
+
+<script>
+// scroll reveal
+const io = new IntersectionObserver((es) => {
+  es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+}, { threshold: 0.12 });
+document.querySelectorAll('.reveal').forEach((el) => io.observe(el));
+
+// latest release -> download links (from the releases-only repo)
+(async () => {
+  const info = document.getElementById('rel-info');
+  const btn = document.getElementById('dl-btn');
+  const zip = document.getElementById('dl-zip');
+  try {
+    const r = await fetch('https://api.github.com/repos/babfialbi91-design/DASK-Releases/releases/latest');
+    if (!r.ok) throw 0;
+    const rel = await r.json();
+    info.textContent = 'آخر إصدار: ' + rel.tag_name;
+    const assets = rel.assets || [];
+    const setup = assets.find(a => /setup|installer/i.test(a.name));
+    const portable = assets.find(a => /portable|\.zip$/i.test(a.name));
+    if (setup) { btn.href = setup.browser_download_url; btn.style.visibility = 'visible'; }
+    else if (assets.length) { btn.href = assets[0].browser_download_url; btn.style.visibility = 'visible'; }
+    else { info.textContent = 'تنزيل من صفحة الإصدارات'; btn.href = rel.html_url; btn.style.visibility = 'visible'; }
+    if (portable) { zip.href = portable.browser_download_url; zip.style.display = 'inline-flex'; }
+  } catch {
+    info.textContent = 'تعذر جلب الإصدار — صفحة الإصدارات';
+    btn.href = 'https://github.com/babfialbi91-design/DASK-Releases';
+    btn.style.visibility = 'visible';
+  }
+})();
+</script>
+</body>
+</html>

@@ -28,6 +28,7 @@
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "dask_app.h"
+#include "profiles.h"
 #include "storage/database.h"
 #include "storage/stores.h"
 #include "tab_manager.h"
@@ -579,9 +580,17 @@ int RunBrowserWindow(HINSTANCE h_instance, int n_cmd_show) {
   CefString(&settings.resources_dir_path).FromWString(exe_dir);
   CefString(&settings.locales_dir_path).FromWString(exe_dir + L"\\locales");
   // Phase 9.6: persistent HTTP cache — pages/JS/images served from disk on
-  // repeat visits (huge perceived speed-up). Normal windows share the
-  // profile cache; --private windows get a per-process cache dir that is
-  // wiped on next private launch (nothing persists from private browsing).
+  // repeat visits (huge perceived speed-up).
+  // Phase 8 constraint: CEF 120+ enforces a process singleton lock on
+  // root_cache_path (an empty value falls back to the SHARED default dir,
+  // so a second DASK window process would fail CefInitialize — the
+  // "CefInitialize() failed." dialog). cache_path must also be a CHILD of
+  // root_cache_path or CEF silently falls back to in-memory storage.
+  // Resolution: the FIRST DASK window process claims the stable
+  // "cef_root\main" root (named mutex, held for the process lifetime) and
+  // keeps the persistent profile cache. Every additional process (new
+  // window, --app, --private) gets a per-pid root with an ephemeral cache
+  // under it; --private is additionally wiped on launch.
   {
     wchar_t appdata[MAX_PATH] = {};
     std::wstring base;
@@ -590,10 +599,15 @@ int RunBrowserWindow(HINSTANCE h_instance, int n_cmd_show) {
       base = std::wstring(appdata) + L"\\DaskBrowser";
     }
     if (!base.empty()) {
+      const std::wstring pid_root = base + L"\\cef_root\\p" +
+                                    std::to_wstring(::GetCurrentProcessId());
+      static HANDLE g_main_root_mutex = nullptr;  // held for process lifetime.
+      g_main_root_mutex = ::CreateMutexW(nullptr, TRUE,
+                                         L"Local\\DaskBrowser.MainRoot");
+      const bool owns_main_root =
+          g_main_root_mutex && ::GetLastError() != ERROR_ALREADY_EXISTS;
       if (TabManager::force_private()) {
-        const std::wstring pc = base + L"\\cef_root\\p" +
-                                std::to_wstring(::GetCurrentProcessId()) +
-                                L"\\cache";
+        const std::wstring pc = pid_root + L"\\cache";
         // Private launch: drop any leftover cache before CEF opens it.
         SHFILEOPSTRUCTW op = {};
         std::wstring from = pc;
@@ -603,28 +617,29 @@ int RunBrowserWindow(HINSTANCE h_instance, int n_cmd_show) {
         op.pFrom = from.c_str();
         op.fFlags = FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT;
         ::SHFileOperationW(&op);
+        CefString(&settings.root_cache_path).FromWString(pid_root);
         CefString(&settings.cache_path).FromWString(pc);
-      } else {
+      } else if (owns_main_root) {
+        // First window process: stable root + persistent profile cache
+        // (cache_path must live UNDER root_cache_path or CEF rejects it).
+        CefString(&settings.root_cache_path)
+            .FromWString(base + L"\\cef_root\\main");
         CefString(&settings.cache_path)
-            .FromWString(base + L"\\profiles\\profile\\cef_cache");
+            .FromWString(base + L"\\cef_root\\main\\profile_cache");
+        // Per-profile request contexts cache under the same stable root.
+        SetCefCacheBase(base + L"\\cef_root\\main");
+        ::SHCreateDirectoryExW(
+            nullptr,
+            (base + L"\\cef_root\\main\\profile_cache").c_str(), nullptr);
+      } else {
+        // Extra process: per-pid root, ephemeral cache under it.
+        CefString(&settings.root_cache_path).FromWString(pid_root);
+        CefString(&settings.cache_path).FromWString(pid_root + L"\\cache");
+        SetCefCacheBase(pid_root);
       }
     }
   }
   settings.multi_threaded_message_loop = true;  // CEF runs its own loop thread.
-  // Phase 8: CEF 120+ enforces a process singleton lock on root_cache_path
-  // (an empty value falls back to the SHARED default dir, so a second DASK
-  // window process would fail CefInitialize — the "CefInitialize() failed."
-  // dialog). Give every window process its own root; the shared user data
-  // lives in the per-profile request contexts (profiles/<id>/cef_cache).
-  {
-    wchar_t appdata[MAX_PATH] = {};
-    if (SUCCEEDED(::SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0,
-                                     appdata))) {
-      CefString(&settings.root_cache_path)
-          .FromWString(std::wstring(appdata) + L"\\DaskBrowser\\cef_root\\p" +
-                       std::to_wstring(::GetCurrentProcessId()));
-    }
-  }
   // Phase 6: diagnostic logging is OFF by default (no personal data is ever
   // written). Enable only for troubleshooting with DASK_LOG=1: CEF's own
   // log goes to <exe dir>\debug.log (rotated by CEF; inspect locally only).

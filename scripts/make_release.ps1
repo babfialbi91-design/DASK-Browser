@@ -10,7 +10,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $bin = Join-Path $root "build\bin"
 $stage = Join-Path $root "dist\stage"
-$version = "1.1.0"
+$version = "1.2.0"
 
 if (-not (Test-Path (Join-Path $bin "dask_browser.exe"))) {
     Write-Error "build\bin\dask_browser.exe missing - build Release first"

@@ -11,6 +11,13 @@
 
 namespace dask {
 
+// CEF requires cache_path to live UNDER root_cache_path. The browser
+// process sets this base (under the active root) before tabs are created;
+// empty = legacy layout (cache next to the profile's dask.db).
+void SetCefCacheBase(const std::wstring& base);
+std::wstring CefCacheBase();
+std::wstring CefCacheDir(const std::wstring& profile_dir);
+
 struct ProfileInfo {
   std::string id;    // directory-safe id ("default", "work", ...)
   std::string name;  // display name
@@ -40,7 +47,7 @@ class ProfileStore {
   std::wstring db_path() const { return active_dir_ + L"\\dask.db"; }
   std::wstring session_path() const { return active_dir_ + L"\\session.json"; }
   std::wstring privacy_path() const { return active_dir_ + L"\\privacy.json"; }
-  std::wstring cef_cache_dir() const { return active_dir_ + L"\\cef_cache"; }
+  std::wstring cef_cache_dir() const { return CefCacheDir(active_dir_); }
 
  private:
   void Save();

@@ -14,6 +14,25 @@
 namespace dask {
 
 namespace {
+// Under the active root_cache_path (see browser_window.cpp); empty until set.
+std::wstring g_cef_cache_base;
+}  // namespace
+
+void SetCefCacheBase(const std::wstring& base) { g_cef_cache_base = base; }
+std::wstring CefCacheBase() { return g_cef_cache_base; }
+std::wstring CefCacheDir(const std::wstring& profile_dir) {
+  // Chrome-runtime CEF only accepts a request-context cache_path that is
+  // |root_cache_path| itself or an IMMEDIATE child of it (anything deeper
+  // silently falls back to in-memory storage: "Cannot create profile at
+  // path"). So the cache dir is <root>\<profile-id> — one level deep only.
+  const wchar_t sep = L'\\';
+  if (g_cef_cache_base.empty()) return profile_dir;
+  const std::wstring id =
+      profile_dir.substr(profile_dir.find_last_of(sep) + 1);
+  return g_cef_cache_base + std::wstring(1, sep) + id;
+}
+
+namespace {
 
 std::wstring Utf8ToWide(const std::string& s) {
   int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
