@@ -911,6 +911,30 @@ input:focus-visible,
   margin-bottom: 8px;
 }
 
+/* Settings > General: homepage field + save button on one row. */
+.row-inline {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+  flex-wrap: wrap;
+}
+.row-inline .text-input {
+  flex: 1;
+  min-width: 220px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  outline: none;
+}
+.row-inline .text-input:focus-visible {
+  border-color: var(--accent);
+}
+
 .link-edit-row input {
   flex: 1;
   min-width: 0;

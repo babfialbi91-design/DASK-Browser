@@ -185,8 +185,15 @@ export type Request =
   | { type: 'resizeMenuPopup'; wide: boolean; top?: number; height?: number }
   | { type: 'dragWindow' }
   | { type: 'windowControl'; action: 'min' | 'max' | 'close' }
-  | { type: 'getSetting'; key: 'accent' | 'onboarded' }
-  | { type: 'setSetting'; key: 'accent' | 'onboarded'; value: string }
+  | {
+      type: 'getSetting'
+      key: 'accent' | 'onboarded' | 'homepage' | 'updateCheckEnabled'
+    }
+  | {
+      type: 'setSetting'
+      key: 'accent' | 'onboarded' | 'homepage' | 'updateCheckEnabled'
+      value: string
+    }
   | { type: 'checkUpdate' }
   | { type: 'pwResolve'; id: number; save: boolean }
   | { type: 'pwList' }

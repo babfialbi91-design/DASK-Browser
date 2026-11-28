@@ -577,7 +577,8 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
       // Phase 9.5: small named preferences for the UI (accent color, first-run
       // wizard flag). Strict key allowlist — the bridge never becomes a
       // generic key/value store.
-      static const std::set<std::string> kSettingKeys = {"accent", "onboarded"};
+      static const std::set<std::string> kSettingKeys = {
+          "accent", "onboarded", "homepage", "updateCheckEnabled"};
       const std::string key = dict->GetString("key").ToString();
       if (!kSettingKeys.count(key)) {
         callback->Failure(403, "unknown setting key");
@@ -586,11 +587,25 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
       // Read from the in-memory copy: a synchronous SQLite read here would
       // race the DB thread's connection and silently fail (empty value).
       if (type == "getSetting") {
-        callback->Success(key == "accent" ? mgr_->accent_ : mgr_->onboarded_);
+        if (key == "accent") callback->Success(mgr_->accent_);
+        else if (key == "homepage") callback->Success(mgr_->homepage_);
+        else if (key == "updateCheckEnabled")
+          callback->Success(mgr_->update_check_enabled_ ? "1" : "0");
+        else callback->Success(mgr_->onboarded_);
       } else {
         const std::string value = dict->GetString("value").ToString();
-        if (value.size() > 64) {
+        const size_t max_len = key == "homepage" ? 512 : 64;
+        if (value.size() > max_len) {
           callback->Failure(400, "value too long");
+          return true;
+        }
+        if (key == "homepage" && !value.empty() &&
+            value.rfind("http://", 0) != 0 && value.rfind("https://", 0) != 0) {
+          callback->Failure(400, "homepage must be http(s)");
+          return true;
+        }
+        if (key == "updateCheckEnabled" && value != "0" && value != "1") {
+          callback->Failure(400, "bad value");
           return true;
         }
         mgr_->SetPrefString(key, value);
@@ -601,6 +616,10 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
           }
         } else if (key == "onboarded") {
           mgr_->onboarded_ = value;
+        } else if (key == "homepage") {
+          mgr_->homepage_ = value;
+        } else if (key == "updateCheckEnabled") {
+          mgr_->update_check_enabled_ = value == "1";
         }
       }
     } else if (type == "checkUpdate") {
@@ -1244,6 +1263,8 @@ void TabManager::Start() {
       prefs.GetString("accent", "", &accent_, &db_err);
       if (accent_.empty() || accent_[0] != '#') accent_ = "#8b5cf6";
       prefs.GetString("onboarded", "", &onboarded_, &db_err);
+      prefs.GetString("homepage", "", &homepage_, &db_err);
+      prefs.GetBool("updateCheckEnabled", true, &update_check_enabled_, &db_err);
     }
   }
 
@@ -1317,8 +1338,10 @@ void TabManager::Start() {
   StartDatabase();
 
   // Phase 9.6: automatic update check — one anonymous HTTPS GET per day,
-  // delayed so it never affects startup.
+  // delayed so it never affects startup. The user can disable it entirely
+  // (Settings > General > updateCheckEnabled).
   PostToCef([this]() {
+    if (!update_check_enabled_) return;
     CefPostDelayedTask(TID_UI, new FnTask(
         []() { dask::CheckForUpdate(false); }), 15000);
   });
@@ -1540,8 +1563,17 @@ void TabManager::Home() {
   PostToCef([this]() {
     if (Tab* tab = FindTab(active_tab_id_)) {
       if (tab->browser && !tab->closing) {
+        // User-configurable homepage (Settings > General). Empty = new tab.
+        std::wstring target = kNewTabUrl;
+        if (!homepage_.empty()) {
+          // http(s)-validated on write; re-check defensively here.
+          if (homepage_.rfind("http://", 0) == 0 ||
+              homepage_.rfind("https://", 0) == 0) {
+            target = WideFromUtf8(homepage_);
+          }
+        }
         CefString url;
-        url.FromWString(kNewTabUrl);
+        url.FromWString(target);
         tab->browser->GetMainFrame()->LoadURL(url);
       }
     }

@@ -440,6 +440,8 @@ class TabManager {
   bool light_theme_ = false;  // Phase 7: UI theme (false = dark, default)
   std::string accent_ = "#8b5cf6";  // Phase 9.5: user accent color
   std::string onboarded_;  // Phase 9.5: first-run wizard done flag (memory copy)
+  std::string homepage_;   // Settings > General: home button target (http(s), may be empty)
+  bool update_check_enabled_ = true;  // Settings > General: daily update check
 
   // Phase 9.6: app update state (CEF UI thread copies).
   bool update_available_ = false;

@@ -72,6 +72,22 @@ function App() {
   const [usCode, setUsCode] = useState('')
   const [usNote, setUsNote] = useState('')
   const [updateNote, setUpdateNote] = useState('')
+  const [homepage, setHomepage] = useState('')
+  const [homeNote, setHomeNote] = useState('')
+  const [updateCheckEnabled, setUpdateCheckEnabled] = useState(true)
+
+  useEffect(() => {
+    void sendTyped<{ value: string }>({ type: 'getSetting', key: 'homepage' })
+      .then((r) => setHomepage(r.value ?? ''))
+      .catch(() => {})
+    void sendTyped<{ value: string }>({
+      type: 'getSetting',
+      key: 'updateCheckEnabled',
+    })
+      .then((r) => setUpdateCheckEnabled(r.value !== '0'))
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     if (section === 'passwords') loadPw()
@@ -171,6 +187,57 @@ function App() {
               }
             />
             <span>سمة فاتحة للواجهة (الافتراضي داكن).</span>
+          </label>
+
+          <h3>الصفحة الرئيسية (زر المنزل)</h3>
+          <div className="row-inline">
+            <input
+              className="text-input"
+              dir="ltr"
+              placeholder="اتركه فارغاً لفتح صفحة التبويب الجديد"
+              value={homepage}
+              onChange={(e) => setHomepage(e.target.value)}
+            />
+            <button
+              className="btn"
+              onClick={() => {
+                const v = homepage.trim()
+                if (v && !(v.startsWith('http://') || v.startsWith('https://'))) {
+                  setHomeNote('يجب أن يكون الرابط http أو https')
+                  return
+                }
+                void sendTyped<{ ok: boolean }>({
+                  type: 'setSetting',
+                  key: 'homepage',
+                  value: v,
+                })
+                  .then(() => setHomeNote(v ? 'تم الحفظ ✓' : 'تم الحفظ — صفحة التبويب الجديد ✓'))
+                  .catch(() => setHomeNote('تعذر الحفظ'))
+              }}
+            >
+              حفظ
+            </button>
+          </div>
+          {homeNote && <p className="note">{homeNote}</p>}
+
+          <h3>التحديثات</h3>
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={updateCheckEnabled}
+              onChange={(e) => {
+                setUpdateCheckEnabled(e.target.checked)
+                void sendTyped<{ ok: boolean }>({
+                  type: 'setSetting',
+                  key: 'updateCheckEnabled',
+                  value: e.target.checked ? '1' : '0',
+                }).catch(() => {})
+              }}
+            />
+            <span>
+              فحص تلقائي يومي للتحديثات (طلب HTTPS مجهول واحد يومياً من
+              GitHub). يمكنك إيقافه بالكامل.
+            </span>
           </label>
 
           <h3>محرك البحث الافتراضي</h3>
