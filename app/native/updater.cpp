@@ -55,7 +55,7 @@ namespace dask {
 namespace {
 
 // DASK Browser version (kept in sync with the installer / CMake).
-constexpr char kAppVersion[] = "1.2.0";
+constexpr char kAppVersion[] = "1.3.0";
 
 std::wstring Utf8ToWide(const std::string& s) {
   if (s.empty()) return {};
