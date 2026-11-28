@@ -18,7 +18,7 @@ namespace dask::storage {
 
 // Every schema change appends a migration step; kLatestVersion must match
 // the number of steps applied.
-constexpr int kLatestVersion = 2;
+constexpr int kLatestVersion = 3;
 
 class Database {
  public:
