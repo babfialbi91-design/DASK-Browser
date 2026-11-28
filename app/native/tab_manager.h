@@ -42,6 +42,9 @@
 
 namespace dask {
 
+// Appends a note to %LOCALAPPDATA%\DaskBrowser\crash_log.txt (noexcept).
+void LogCrashNote(const std::string& what) noexcept;
+
 // Custom messages used by TabManager <-> browser_window marshaling.
 constexpr UINT WM_DASK_RUN_TASK = WM_APP + 0x110;     // lParam: std::function<void()>*
 constexpr UINT WM_DASK_CREATE_HOST = WM_APP + 0x111;  // wParam: tab id, returns HWND
@@ -60,6 +63,11 @@ constexpr UINT WM_DASK_KICK = WM_APP + 0x11B;      // Phase 9.6: force re-render
 constexpr int kUiToolbarHeight = 84;
 
 constexpr wchar_t kNewTabUrl[] = L"http://dask.ui/newtab.html";
+
+// Phase 11: the DASK Search engine page (deployed on Cloudflare Pages).
+// Shown as the first tab on launch; web-content so its bridge access is
+// limited to the web channel (pwQuery/pwSubmit/usCode) like any site.
+constexpr wchar_t kSearchPageUrl[] = L"https://dask-browser.pages.dev/search/";
 
 struct QuickLink {
   std::wstring title;
@@ -166,6 +174,10 @@ class TabManager {
   void ClearHistory(int days);          // 0 = everything
   void ToggleBookmarkActive();          // Ctrl+D: star the active tab
   void SetHistoryEnabled(bool enabled);
+  void SetHttpsOnly(bool enabled);  // Phase 11: upgrade http -> https main frames
+  void RecordUpgrade(int64_t tab_id, const std::wstring& http_url);  // UI thread
+  bool WasUpgraded(int64_t tab_id, const std::wstring& https_url,
+                   std::wstring* out_http);  // UI thread
   void SetRetentionDays(int days);
   void SetRestoreSession(bool enabled);
   void SetLightTheme(bool enabled);
@@ -442,6 +454,9 @@ class TabManager {
   std::string onboarded_;  // Phase 9.5: first-run wizard done flag (memory copy)
   std::string homepage_;   // Settings > General: home button target (http(s), may be empty)
   bool update_check_enabled_ = true;  // Settings > General: daily update check
+  bool https_only_ = true;  // Phase 11: upgrade plain http main-frame loads
+  std::map<int64_t, std::wstring> upgraded_http_;  // UI thread (no lock)
+  std::string wallpaper_;   // '' = daily pick, else a bundled wallpaper id
 
   // Phase 9.6: app update state (CEF UI thread copies).
   bool update_available_ = false;

@@ -1,6 +1,8 @@
 // DASK Browser - filter list storage and updates implementation.
 #include "filter_lists.h"
 
+#include "tab_manager.h"
+
 #include <windows.h>
 #include <winhttp.h>
 
@@ -28,8 +30,14 @@ class FnTask : public CefTask {
  public:
   explicit FnTask(std::function<void()> fn) : fn_(std::move(fn)) {}
   void Execute() override {
-    auto run = std::move(fn_);
-    run();
+    try {
+      auto run = std::move(fn_);
+      run();
+    } catch (const std::exception& e) {
+      dask::LogCrashNote(std::string("filter task exception: ") + e.what());
+    } catch (...) {
+      dask::LogCrashNote("filter task exception: unknown");
+    }
   }
 
  private:

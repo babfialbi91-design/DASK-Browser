@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import '../common/theme.css'
 import { applyAccent } from '../common/accent'
 import {
+  getSettingRaw,
   send,
   sendTyped,
   subscribe,
@@ -77,14 +78,12 @@ function App() {
   const [updateCheckEnabled, setUpdateCheckEnabled] = useState(true)
 
   useEffect(() => {
-    void sendTyped<{ value: string }>({ type: 'getSetting', key: 'homepage' })
-      .then((r) => setHomepage(r.value ?? ''))
+    // getSetting replies with a plain (non-JSON) string: read via sendRaw.
+    void getSettingRaw('homepage')
+      .then((v) => setHomepage(v))
       .catch(() => {})
-    void sendTyped<{ value: string }>({
-      type: 'getSetting',
-      key: 'updateCheckEnabled',
-    })
-      .then((r) => setUpdateCheckEnabled(r.value !== '0'))
+    void getSettingRaw('updateCheckEnabled')
+      .then((v) => setUpdateCheckEnabled(v !== '0'))
       .catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -92,6 +91,7 @@ function App() {
   useEffect(() => {
     if (section === 'passwords') loadPw()
     if (section === 'extensions') loadScripts()
+    if (section === 'history') runHistorySearch(historyQuery)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section])
 
@@ -565,6 +565,19 @@ function App() {
       {section === 'history' && (
         <section>
           <h2>السجل</h2>
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={state.httpsOnly}
+              onChange={(e) =>
+                go({ type: 'setHttpsOnly', enabled: e.target.checked })
+              }
+            />
+            <span>
+              وضع HTTPS-Only: ترقية أي موقع يفتح بـ http:// إلى https://
+              تلقائياً (تُستثنى العناوين المحلية مثل localhost).
+            </span>
+          </label>
           <label className="toggle-row">
             <input
               type="checkbox"

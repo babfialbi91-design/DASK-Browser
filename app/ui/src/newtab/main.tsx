@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import '../common/theme.css'
 import {
+  getSettingRaw,
   send,
   subscribe,
   type AppState,
@@ -77,8 +78,31 @@ const WALLPAPERS = [
   'forest-mist.svg',
   'desert-dunes.svg',
   'ocean-cliff.svg',
+  'snow-pines.svg',
+  'waterfalls.svg',
+  'red-canyon.svg',
+  'sakura-river.svg',
+  'tea-plantation.svg',
+  'foggy-valley.svg',
 ]
-const wallpaperOf = () => {
+const WALLPAPER_NAMES: Record<string, string> = {
+  '': 'يومي (تلقائي)',
+  'mountains-sunset': 'جبال الغروب',
+  'lake-dawn': 'بحيرة الفجر',
+  'aurora-night': 'الشفق الليلي',
+  'forest-mist': 'غابة الضباب',
+  'desert-dunes': 'كثبان الصحراء',
+  'ocean-cliff': 'منحدر المحيط',
+  'snow-pines': 'ثلوج الصنوبر',
+  'waterfalls': 'الشلالات',
+  'red-canyon': 'الوادي الأحمر',
+  'sakura-river': 'نهر الساكورا',
+  'tea-plantation': 'مزارع الشاي',
+  'foggy-valley': 'وادي الضباب',
+}
+const WALLPAPER_IDS = WALLPAPERS.map((f) => f.slice(0, -'.svg'.length))
+const wallpaperOf = (choice?: string) => {
+  if (choice && WALLPAPER_IDS.includes(choice)) return `wallpapers/${choice}.svg`
   const day = Math.floor(Date.now() / 86400000)
   return `wallpapers/${WALLPAPERS[day % WALLPAPERS.length]}`
 }
@@ -108,6 +132,7 @@ function App() {
   const [query, setQuery] = useState('')
   const [editing, setEditing] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [wallpaper, setWallpaper] = useState('')
   const [draftLinks, setDraftLinks] = useState<QuickLink[]>([])
   const [welcome, setWelcome] = useState<'loading' | 'show' | 'done'>(
     'loading',
@@ -133,14 +158,17 @@ function App() {
 
   // Phase 9.5: first-run wizard — show once until the user picks a theme
   // (or skips). Reads/writes the persisted 'onboarded' flag via the bridge.
+  // Values come back as plain strings: read them with getSettingRaw —
+  // send()/sendTyped() JSON-parse them and throw on non-JSON values.
   useEffect(() => {
     void (async () => {
       try {
-        const accent = await send({ type: 'getSetting', key: 'accent' })
-        if (typeof accent === 'string' && accent.startsWith('#'))
-          setPickedAccent(accent)
-        const onboarded = await send({ type: 'getSetting', key: 'onboarded' })
+        const accent = await getSettingRaw('accent')
+        if (accent.startsWith('#')) setPickedAccent(accent)
+        const onboarded = await getSettingRaw('onboarded')
         setWelcome(onboarded === '1' ? 'done' : 'show')
+        const wp = await getSettingRaw('wallpaper')
+        setWallpaper(wp)
       } catch {
         setWelcome('done')
       }
@@ -166,7 +194,13 @@ function App() {
   }
 
   return (
-    <div className="newtab-root" style={{ backgroundImage: `url(${wallpaperOf()})` }}>
+    <div className="newtab-root">
+      {/* Dedicated wallpaper layer so it can Ken-Burns without moving content. */}
+      <div
+        className="nt-wallpaper"
+        aria-hidden="true"
+        style={{ backgroundImage: `url(${wallpaperOf(wallpaper)})` }}
+      />
       <div className="nt-veil" aria-hidden="true" />
 
       {welcome === 'show' && (
@@ -411,6 +445,28 @@ function App() {
               {engine.label}
             </label>
           ))}
+          <h3>خلفية صفحة التبويب الجديد</h3>
+          <div className="wallpaper-picker">
+            {Object.entries(WALLPAPER_NAMES).map(([id, name]) => (
+              <button
+                key={id}
+                title={name}
+                aria-label={name}
+                className={'wp-thumb' + (wallpaper === id ? ' on' : '')}
+                style={
+                  id
+                    ? { backgroundImage: `url(wallpapers/${id}.svg)` }
+                    : undefined
+                }
+                onClick={() => {
+                  setWallpaper(id)
+                  go({ type: 'setSetting', key: 'wallpaper', value: id })
+                }}
+              >
+                {id ? '' : 'يومي'}
+              </button>
+            ))}
+          </div>
           {state.searchEngine.id === 'custom' && (
             <>
               <input

@@ -22,9 +22,10 @@ bool DownloadToString(const std::string& url_utf8, std::string* out,
     if (u.rfind(pfx, 0) != 0) return false;
     u = u.substr(pfx.size());
     const size_t slash = u.find('/');
-    std::string h = u.substr(0, slash);
-    path = std::wstring(u.substr(slash).begin(), u.substr(slash).end());
-    host = std::wstring(h.begin(), h.end());
+    const std::string hp = u.substr(0, slash == std::string::npos ? u.size() : slash);
+    const std::string pp = slash == std::string::npos ? "/" : u.substr(slash);
+    path = std::wstring(pp.begin(), pp.end());
+    host = std::wstring(hp.begin(), hp.end());
   }
   out->clear();
 

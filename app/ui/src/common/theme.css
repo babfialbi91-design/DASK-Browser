@@ -220,6 +220,7 @@ input:focus-visible,
 .tab {
   display: flex;
   align-items: center;
+  position: relative;
   gap: 8px;
   max-width: 220px;
   min-width: 120px;
@@ -231,6 +232,25 @@ input:focus-visible,
   color: var(--muted);
   overflow: hidden;
   text-align: right;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.tab::after {
+  /* Active-tab accent underline that slides in. */
+  content: '';
+  position: absolute;
+  inset-inline: 10px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: right;
+  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+.tab.active::after {
+  transform: scaleX(1);
 }
 
 .tab.active {
@@ -358,6 +378,19 @@ input:focus-visible,
   padding: 20px 24px 22px;
   margin: 16px 0;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+  /* Section switches glide in instead of popping. */
+  animation: section-in 0.28s cubic-bezier(0.2, 0.8, 0.3, 1.1);
+}
+
+@keyframes section-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-root section {
+    animation: none !important;
+  }
 }
 
 .settings-root h1 {
@@ -575,12 +608,31 @@ input:focus-visible,
   direction: rtl;
   overflow-y: auto;
   user-select: none;
-  /* Phase 9.5: full-page nature wallpaper (bundled SVG scenes, daily pick).
-     The background-image is set inline; these layers keep it readable. */
+  background-color: #10121a;
+}
+
+/* Dedicated wallpaper layer: slow Ken-Burns drift (GPU transform, subtle). */
+.nt-wallpaper {
+  position: fixed;
+  inset: -28px;
   background-color: #10121a;
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
+  animation: ken-burns 60s ease-in-out infinite alternate;
+  will-change: transform;
+  pointer-events: none;
+}
+
+/* Fixed wallpaper/veil paint above normal flow: lift the content above. */
+.newtab-root > *:not(.nt-wallpaper):not(.nt-veil):not(.welcome-overlay) {
+  position: relative;
+  z-index: 2;
+}
+
+@keyframes ken-burns {
+  from { transform: scale(1) translateY(0); }
+  to   { transform: scale(1.05) translateY(8px); }
 }
 
 /* Dark veil over the wallpaper so the UI stays readable. */
@@ -609,10 +661,47 @@ input:focus-visible,
 .link-tile:nth-child(4) { animation-delay: 0.14s }
 .link-tile:nth-child(5) { animation-delay: 0.18s }
 .link-tile:nth-child(6) { animation-delay: 0.22s }
+.link-tile:nth-child(7) { animation-delay: 0.26s }
+.link-tile:nth-child(8) { animation-delay: 0.30s }
+.link-tile:nth-child(9) { animation-delay: 0.34s }
+.link-tile:nth-child(10) { animation-delay: 0.38s }
+.link-tile:nth-child(11) { animation-delay: 0.42s }
+.link-tile:nth-child(12) { animation-delay: 0.46s }
+
+/* Search box: gentle rise-in after the tiles. */
+.search-wrap {
+  animation: tile-in 0.4s cubic-bezier(0.2, 0.85, 0.3, 1.15) backwards 0.05s;
+}
+
+#nt-search {
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.link-tile {
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.link-tile:hover {
+  transform: translateY(-2px);
+}
 
 @keyframes tile-in {
   from { opacity: 0; transform: translateY(16px) scale(0.94); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Respect the OS reduce-motion setting everywhere. */
+@media (prefers-reduced-motion: reduce) {
+  .nt-wallpaper,
+  .link-tile,
+  .wordmark,
+  .search-wrap {
+    animation: none !important;
+  }
+  .link-tile,
+  #nt-search {
+    transition: none !important;
+  }
 }
 
 .wordmark {
@@ -896,6 +985,37 @@ input:focus-visible,
   border-radius: var(--radius);
   background: var(--panel);
   border: 1px solid var(--border);
+}
+
+/* New tab settings panel: wallpaper thumbnails grid. */
+.wallpaper-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  gap: 8px;
+  margin: 10px 0 14px;
+}
+
+.wp-thumb {
+  height: 54px;
+  border-radius: 8px;
+  border: 2px solid var(--border);
+  background-color: #10121a;
+  background-size: cover;
+  background-position: center;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.wp-thumb:hover {
+  transform: translateY(-2px);
+}
+
+.wp-thumb.on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .editor h3,

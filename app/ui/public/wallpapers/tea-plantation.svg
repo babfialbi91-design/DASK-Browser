@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1e3a5f"/>
+      <stop offset=".4" stop-color="#64748b"/>
+      <stop offset=".8" stop-color="#c2d5e3"/>
+      <stop offset="1" stop-color="#e7eef5"/>
+    </linearGradient>
+    <linearGradient id="hill1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4d7c43"/>
+      <stop offset="1" stop-color="#315c31"/>
+    </linearGradient>
+    <linearGradient id="hill2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a6136"/>
+      <stop offset="1" stop-color="#25431f"/>
+    </linearGradient>
+    <linearGradient id="hill3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b4a27"/>
+      <stop offset="1" stop-color="#1a3016"/>
+    </linearGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#sky)"/>
+  <circle cx="520" cy="240" r="90" fill="#fefce8" opacity=".85"/>
+  <circle cx="520" cy="240" r="140" fill="#fefce8" opacity=".18"/>
+  <g fill="#ffffff" opacity=".4">
+    <ellipse cx="1300" cy="200" rx="260" ry="30"/>
+    <ellipse cx="1440" cy="235" rx="170" ry="22"/>
+  </g>
+  <path fill="url(#hill1)" d="M0 560 Q480 440 960 520 T1920 480 L1920 1080 L0 1080 Z"/>
+  <path fill="url(#hill2)" d="M0 760 Q480 640 960 720 T1920 680 L1920 1080 L0 1080 Z"/>
+  <path fill="url(#hill3)" d="M0 960 Q480 860 960 920 T1920 880 L1920 1080 L0 1080 Z"/>
+  <g stroke="#16301a" stroke-width="4" opacity=".5" fill="none">
+    <path d="M0 600 Q480 480 960 560 T1920 520"/>
+    <path d="M0 640 Q480 520 960 600 T1920 560"/>
+    <path d="M0 800 Q480 680 960 760 T1920 720"/>
+    <path d="M0 840 Q480 720 960 800 T1920 760"/>
+    <path d="M0 1000 Q480 900 960 960 T1920 920"/>
+  </g>
+  <g fill="#16301a" opacity=".9">
+    <ellipse cx="360" cy="580" rx="16" ry="10"/>
+    <ellipse cx="700" cy="610" rx="15" ry="9"/>
+    <ellipse cx="1100" cy="640" rx="17" ry="10"/>
+    <ellipse cx="1500" cy="600" rx="15" ry="9"/>
+    <ellipse cx="240" cy="780" rx="16" ry="10"/>
+    <ellipse cx="820" cy="800" rx="15" ry="9"/>
+    <ellipse cx="1400" cy="820" rx="16" ry="10"/>
+  </g>
+  <g fill="#d9f2e5" opacity=".3">
+    <path d="M1100 300 q60 30 0 60 q-60 -30 0 -60" fill-opacity=".5"/>
+    <path d="M1500 340 q50 26 0 52 q-50 -26 0 -52" fill-opacity=".5"/>
+  </g>
+</svg>

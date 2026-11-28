@@ -8,12 +8,25 @@
 #include <functional>
 #include "include/cef_task.h"
 
+namespace dask {
+void LogCrashNote(const std::string& what) noexcept;  // defined in tab_manager.cpp
+}  // namespace dask
+
 namespace {
 
 class UiFnTask : public CefTask {
  public:
   explicit UiFnTask(std::function<void()> fn) : fn_(std::move(fn)) {}
-  void Execute() override { auto run = std::move(fn_); run(); }
+  void Execute() override {
+    try {
+      auto run = std::move(fn_);
+      run();
+    } catch (const std::exception& e) {
+      dask::LogCrashNote(std::string("updater task exception: ") + e.what());
+    } catch (...) {
+      dask::LogCrashNote("updater task exception: unknown");
+    }
+  }
 
  private:
   IMPLEMENT_REFCOUNTING(UiFnTask);
@@ -77,6 +90,7 @@ void CheckForUpdate(bool manual) {
   }
 
   std::thread([manual]() {
+    try {
     const std::string url =
         "https://api.github.com/repos/babfialbi91-design/"
         "DASK-Browser/releases/latest";
@@ -129,6 +143,11 @@ void CheckForUpdate(bool manual) {
                                                                  : page,
                                          newer, false);
     });
+    } catch (const std::exception& e) {
+      dask::LogCrashNote(std::string("updater exception: ") + e.what());
+    } catch (...) {
+      dask::LogCrashNote("updater exception: unknown");
+    }
   }).detach();
 }
 

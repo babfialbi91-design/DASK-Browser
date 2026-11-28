@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#134e4a"/>
+      <stop offset=".45" stop-color="#2dd4bf"/>
+      <stop offset=".75" stop-color="#99f6e4"/>
+      <stop offset="1" stop-color="#ccfbf1"/>
+    </linearGradient>
+    <linearGradient id="cliff" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0f3d3a"/>
+      <stop offset="1" stop-color="#062725"/>
+    </linearGradient>
+    <linearGradient id="fall" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e0f7f4" stop-opacity=".95"/>
+      <stop offset="1" stop-color="#99e6de" stop-opacity=".55"/>
+    </linearGradient>
+    <linearGradient id="pool" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5eead4" stop-opacity=".8"/>
+      <stop offset="1" stop-color="#14b8a6" stop-opacity=".9"/>
+    </linearGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#sky)"/>
+  <g fill="#ffffff" opacity=".35">
+    <ellipse cx="420" cy="180" rx="220" ry="30"/>
+    <ellipse cx="560" cy="215" rx="150" ry="22"/>
+    <ellipse cx="1520" cy="150" rx="240" ry="32"/>
+  </g>
+  <path fill="url(#cliff)" d="M0 420 L300 380 L560 430 L820 350 L1040 420 L1040 1080 L0 1080 Z"/>
+  <path fill="url(#cliff)" d="M1160 400 L1420 350 L1680 420 L1920 360 L1920 1080 L1160 1080 Z"/>
+  <rect x="900" y="380" width="140" height="560" fill="url(#fall)"/>
+  <g stroke="#ffffff" stroke-width="6" opacity=".55" stroke-linecap="round">
+    <line x1="925" y1="390" x2="925" y2="930"/>
+    <line x1="950" y1="386" x2="950" y2="940"/>
+    <line x1="975" y1="392" x2="975" y2="935"/>
+    <line x1="1002" y1="388" x2="1002" y2="944"/>
+  </g>
+  <ellipse cx="970" cy="960" rx="330" ry="46" fill="url(#pool)"/>
+  <g fill="#ffffff" opacity=".5">
+    <circle cx="800" cy="950" r="5"/><circle cx="870" cy="968" r="4"/>
+    <circle cx="1090" cy="955" r="5"/><circle cx="1160" cy="970" r="3.6"/>
+    <circle cx="940" cy="985" r="4.4"/><circle cx="1010" cy="992" r="3.2"/>
+  </g>
+  <g fill="#064e3b" opacity=".9">
+    <path d="M240 500 L280 420 L320 500 Z"/>
+    <path d="M300 510 L345 435 L390 510 Z"/>
+    <path d="M1600 470 L1645 392 L1690 470 Z"/>
+    <path d="M1680 480 L1722 400 L1764 480 Z"/>
+  </g>
+  <g stroke="#7dfad9" stroke-width="3" opacity=".5" fill="none">
+    <path d="M480 700 q40 -20 80 0 t80 0"/>
+    <path d="M1360 760 q40 -20 80 0 t80 0"/>
+  </g>
+</svg>

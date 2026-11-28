@@ -42,6 +42,16 @@ constexpr wchar_t kMenuPopupClassName[] = L"DaskMenuPopup";
 constexpr int kInitialWidth = 1280;
 constexpr int kInitialHeight = 800;
 
+// Last applied flyout state (WM_DASK_MENU_WIDE): skip redundant window
+// resizes/region repaints so hovering between flyout rows never flickers.
+int g_menu_wide = -1, g_menu_top = -1, g_menu_fly = -1;
+
+void ResetMenuWideCache() {
+  g_menu_wide = -1;
+  g_menu_top = -1;
+  g_menu_fly = -1;
+}
+
 // UTF-8 helper for the init-failure diagnostic file.
 std::string NarrowUtf8(const std::wstring& w) {
   const int n = ::WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(),
@@ -426,9 +436,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     }
     case WM_DASK_MENU_CLOSED:
       // The popup was deactivated or destroyed: tear down the menu browser.
+      ResetMenuWideCache();
       TabManager::Get()->OnMenuDeactivated();
       return 0;
     case WM_DASK_DESTROY_MENU_HOST:
+      ResetMenuWideCache();
       // Destroy the popup on the thread that owns it.
       ::EnumWindows([](HWND w, LPARAM) -> BOOL {
         wchar_t cls[64] = {};
@@ -447,6 +459,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
       // lparam packs the flyout rect: LOWORD=top, HIWORD=height.
       const int top = LOWORD(lparam);
       const int fly_h = HIWORD(lparam);
+      // Skip redundant work: moving between flyout rows re-sends the same
+      // resize/clip; repeating SetWindowPos + SetWindowRgn(bRepaint=TRUE)
+      // repaints the whole area every time = visible flicker over the page.
+      if (wparam == g_menu_wide && top == g_menu_top && fly_h == g_menu_fly)
+        return 0;
+      g_menu_wide = static_cast<int>(wparam);
+      g_menu_top = top;
+      g_menu_fly = fly_h;
       struct WideCtx { HWND main; int wide; int top; int fly_h; };
       WideCtx ctx{hwnd, static_cast<int>(wparam), top, fly_h};
       ::EnumWindows([](HWND w, LPARAM lp) -> BOOL {

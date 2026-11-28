@@ -137,12 +137,24 @@ bool IsHttpUrl(const std::wstring& url) {
 }
 
 // CefTask adapter that runs a plain callable on the target thread.
+// Appends a crash/exception note to %LOCALAPPDATA%DaskBrowsercrash_log.txt.
+// Exception safety: keep it noexcept; the last thing we want is to throw
+// while reporting a problem.
+
 class FnTask : public CefTask {
  public:
   explicit FnTask(std::function<void()> fn) : fn_(std::move(fn)) {}
   void Execute() override {
-    auto run = std::move(fn_);
-    run();
+    // A throw escaping into CEF's task loop would terminate the whole
+    // browser (uncaught exception -> abort). Swallow + log instead.
+    try {
+      auto run = std::move(fn_);
+      run();
+    } catch (const std::exception& e) {
+      LogCrashNote(std::string("task exception: ") + e.what());
+    } catch (...) {
+      LogCrashNote("task exception: unknown");
+    }
   }
 
  private:
@@ -169,6 +181,36 @@ void AppendDict(CefRefPtr<CefListValue> list,
 }
 
 }  // namespace
+
+void LogCrashNote(const std::string& what) noexcept {
+  wchar_t appdata[MAX_PATH] = {};
+  if (FAILED(::SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0,
+                                appdata)))
+    return;
+  const std::wstring path =
+      std::wstring(appdata) + L"\\DaskBrowser\\crash_log.txt";
+  ::OutputDebugStringA((std::string("[DASK crash] ") + what).c_str());
+  HANDLE f = ::CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ,
+                           nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL,
+                           nullptr);
+  if (f == INVALID_HANDLE_VALUE) return;
+  SYSTEMTIME st;
+  ::GetLocalTime(&st);
+  const char stamp[] = "%04d-%02d-%02d %02d:%02d:%02d ";
+  char head[64] = {};
+  const int hn = _snprintf_s(head, sizeof(head), _TRUNCATE, stamp,
+                             st.wYear, st.wMonth, st.wDay, st.wHour,
+                             st.wMinute, st.wSecond);
+  DWORD written = 0;
+  if (hn > 0)
+    ::WriteFile(f, head, static_cast<DWORD>(hn), &written, nullptr);
+  ::WriteFile(f, what.data(), static_cast<DWORD>(what.size()), &written,
+              nullptr);
+  const char nl[2] = {'\r', '\n'};
+  ::WriteFile(f, nl, 2, &written, nullptr);
+  ::CloseHandle(f);
+}
+
 
 void PostToWin(HWND main_hwnd, std::function<void()> fn) {
   auto* boxed = new std::function<void()>(std::move(fn));
@@ -318,7 +360,7 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
         "setThirdPartyCookies", "setSiteAllowed", "removeSiteException",
         "clearSiteData", "clearBrowsingData", "updateFilterLists",
         "toggleBookmark", "removeBookmark", "updateBookmark",
-        "searchHistory", "clearHistory", "setHistoryEnabled",
+        "searchHistory", "clearHistory", "setHistoryEnabled", "setHttpsOnly",
         "setRetentionDays", "setRestoreSession", "cancelDownload",
         "removeDownload", "openDownload", "openDownloadsFolder",
         "respondPermission", "setPermission", "resetPermission",
@@ -468,6 +510,9 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
     } else if (type == "setHistoryEnabled") {
       mgr_->SetHistoryEnabled(dict->GetBool("enabled"));
       mgr_->PushUiEvent();
+    } else if (type == "setHttpsOnly") {
+      mgr_->SetHttpsOnly(dict->GetBool("enabled"));
+      mgr_->PushUiEvent();
     } else if (type == "setRetentionDays") {
       mgr_->SetRetentionDays(dict->GetInt("days"));
     } else if (type == "setRestoreSession") {
@@ -578,7 +623,8 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
       // wizard flag). Strict key allowlist — the bridge never becomes a
       // generic key/value store.
       static const std::set<std::string> kSettingKeys = {
-          "accent", "onboarded", "homepage", "updateCheckEnabled"};
+          "accent", "onboarded", "homepage", "updateCheckEnabled",
+          "wallpaper"};
       const std::string key = dict->GetString("key").ToString();
       if (!kSettingKeys.count(key)) {
         callback->Failure(403, "unknown setting key");
@@ -591,6 +637,7 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
         else if (key == "homepage") callback->Success(mgr_->homepage_);
         else if (key == "updateCheckEnabled")
           callback->Success(mgr_->update_check_enabled_ ? "1" : "0");
+        else if (key == "wallpaper") callback->Success(mgr_->wallpaper_);
         else callback->Success(mgr_->onboarded_);
       } else {
         const std::string value = dict->GetString("value").ToString();
@@ -608,6 +655,18 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
           callback->Failure(400, "bad value");
           return true;
         }
+        if (key == "wallpaper") {
+          // Allowed: '' (daily pick) or one of the bundled wallpaper ids.
+          static const std::set<std::string> kWallpapers = {
+              "", "mountains-sunset", "lake-dawn", "aurora-night",
+              "forest-mist", "desert-dunes", "ocean-cliff", "snow-pines",
+              "waterfalls", "red-canyon", "sakura-river", "tea-plantation",
+              "foggy-valley"};
+          if (!kWallpapers.count(value)) {
+            callback->Failure(400, "bad wallpaper");
+            return true;
+          }
+        }
         mgr_->SetPrefString(key, value);
         if (key == "accent") {
           if (mgr_->accent_ != value) {
@@ -620,6 +679,8 @@ class DaskQueryHandler : public CefMessageRouterBrowserSide::Handler {
           mgr_->homepage_ = value;
         } else if (key == "updateCheckEnabled") {
           mgr_->update_check_enabled_ = value == "1";
+        } else if (key == "wallpaper") {
+          mgr_->wallpaper_ = value;
         }
       }
     } else if (type == "checkUpdate") {
@@ -976,6 +1037,48 @@ class TabClient : public CefClient,
     (void)user_gesture;
     (void)is_redirect;
     mgr_->router()->OnBeforeBrowse(browser, frame);
+    // HTTPS-Only (Phase 11): upgrade plain http:// main-frame loads to
+    // https:// unless the user disabled it or the host is local (localhost,
+    // 127.x, LAN ranges, *.local) where TLS typically doesn't exist.
+    if (mgr_->https_only_ && frame->IsMain() && !is_redirect) {
+      const std::wstring url = request->GetURL().ToWString();
+      if (url.rfind(L"http://", 0) == 0) {
+        const std::wstring host = adblock::UrlHost(url);
+        // Internal pages are served by the dask.ui scheme handler (http
+        // only) — never upgrade them.
+        const bool local = host == L"dask.ui" ||
+                           host.rfind(L"localhost", 0) == 0 ||
+                           host.rfind(L"127.", 0) == 0 ||
+                           host.rfind(L"192.168.", 0) == 0 ||
+                           host.rfind(L"10.", 0) == 0 ||
+                           host.rfind(L"172.16.", 0) == 0 ||
+                           host.rfind(L"172.17.", 0) == 0 ||
+                           host.rfind(L"172.18.", 0) == 0 ||
+                           host.rfind(L"172.19.", 0) == 0 ||
+                           host.rfind(L"172.20.", 0) == 0 ||
+                           host.rfind(L"172.21.", 0) == 0 ||
+                           host.rfind(L"172.22.", 0) == 0 ||
+                           host.rfind(L"172.23.", 0) == 0 ||
+                           host.rfind(L"172.24.", 0) == 0 ||
+                           host.rfind(L"172.25.", 0) == 0 ||
+                           host.rfind(L"172.26.", 0) == 0 ||
+                           host.rfind(L"172.27.", 0) == 0 ||
+                           host.rfind(L"172.28.", 0) == 0 ||
+                           host.rfind(L"172.29.", 0) == 0 ||
+                           host.rfind(L"172.30.", 0) == 0 ||
+                           host.rfind(L"172.31.", 0) == 0 ||
+                           host.rfind(L".local", 0) == 0;
+        if (!local && host.size() > 4) {
+          std::wstring secure = url;
+          secure.replace(0, 7, L"https://");
+          mgr_->RecordUpgrade(tab_id_, url);
+          CefString cef_url;
+          cef_url.FromWString(secure);
+          frame->LoadURL(cef_url);
+          return true;  // cancel the http load
+        }
+      }
+    }
     return false;  // allow the navigation
   }
 
@@ -1112,6 +1215,26 @@ class TabClient : public CefClient,
     (void)canGoBack;
     (void)canGoForward;
     mgr_->OnLoadingChanged(tab_id_, isLoading);
+  }
+
+  // Phase 11 HTTPS-Only fallback: if an upgraded https load fails outright
+  // (the site simply has no TLS), retry the original http URL once so
+  // http-only sites keep working.
+  void OnLoadError(CefRefPtr<CefBrowser> browser,
+                   CefRefPtr<CefFrame> frame,
+                   ErrorCode errorCode,
+                   const CefString& errorText,
+                   const CefString& failedUrl) override {
+    (void)browser;
+    (void)errorText;
+    if (!frame->IsMain() || errorCode == ERR_ABORTED) return;
+    const std::wstring url = failedUrl.ToWString();
+    if (url.rfind(L"https://", 0) != 0) return;
+    std::wstring origin_http;
+    if (!mgr_->WasUpgraded(tab_id_, url, &origin_http)) return;
+    CefString cef_url;
+    cef_url.FromWString(origin_http);
+    frame->LoadURL(cef_url);
   }
 
   // CefLoadHandler — Phase 10: inject user-script extensions and the
@@ -1258,6 +1381,8 @@ void TabManager::Start() {
       storage::Settings prefs(&prefs_db);
       prefs.GetBool("restoreSession", false, &restore_session_, &db_err);
       prefs.GetBool("historyEnabled", true, &history_enabled_, &db_err);
+      prefs.GetBool("httpsOnly", true, &https_only_, &db_err);
+      prefs.GetString("wallpaper", "", &wallpaper_, &db_err);
       prefs.GetInt("historyRetentionDays", 90, &retention_days_, &db_err);
       prefs.GetBool("lightTheme", false, &light_theme_, &db_err);
       prefs.GetString("accent", "", &accent_, &db_err);
@@ -1329,9 +1454,11 @@ void TabManager::Start() {
   }
 
   // Always end up with at least one tab (empty session, or a session whose
-  // stored tabs were all filtered out).
+  // stored tabs were all filtered out). Phase 11: the fresh launch tab is the
+  // DASK Search page — the engine is the first thing you see. The New Tab
+  // button/shortcut keep opening newtab.html as usual.
   if ((!has_session || restored_tabs == 0) && !direct_url) {
-    CreateTab(kNewTabUrl);
+    CreateTab(kSearchPageUrl);
   }
 
   // Phase 4: open the local database (thread + stores).
@@ -1704,7 +1831,9 @@ void TabManager::OnAddressChanged(int64_t tab_id, const std::wstring& url) {
   for (Tab& tab : tabs_) {
     if (tab.id == tab_id) {
       tab.url = url;
-      tab.internal = tab.internal && url.rfind(kDaskUiOrigin, 0) == 0;
+      // Trust is derived from the CURRENT page: any dask.ui page is a
+      // trusted UI tab (new-tab, settings opened via navigate, menu...).
+      tab.internal = url == kNewTabUrl || url.rfind(kDaskUiOrigin, 0) == 0;
       // New page load: per-tab blocked counter restarts.
       {
         std::lock_guard<std::mutex> lock(blocked_mutex_);
@@ -1904,6 +2033,7 @@ std::string TabManager::BuildStateJson(bool focus_address) {
 
   root_dict->SetBool("restoreSession", restore_session_);
   root_dict->SetBool("historyEnabled", history_enabled_);
+  root_dict->SetBool("httpsOnly", https_only_);
   root_dict->SetInt("retentionDays", retention_days_);
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
@@ -2310,6 +2440,8 @@ void TabManager::StartDatabase() {
                                &db_err);
       settings_store_->GetBool("historyEnabled", true, &history_enabled_,
                                &db_err);
+      settings_store_->GetBool("httpsOnly", true, &https_only_, &db_err);
+      settings_store_->GetString("wallpaper", "", &wallpaper_, &db_err);
       settings_store_->GetInt("historyRetentionDays", 90, &retention_days_,
                               &db_err);
       settings_store_->GetBool("lightTheme", false, &light_theme_, &db_err);
@@ -2341,7 +2473,13 @@ void TabManager::StartDatabase() {
         task = std::move(db_queue_.front());
         db_queue_.pop_front();
       }
-      task();
+      try {
+        task();
+      } catch (const std::exception& e) {
+        LogCrashNote(std::string("db task exception: ") + e.what());
+      } catch (...) {
+        LogCrashNote("db task exception: unknown");
+      }
     }
 
     // Tear down on this thread (SQLite objects are thread-confined).
@@ -2436,7 +2574,7 @@ void TabManager::RecordVisit(int64_t tab_id, const std::wstring& url,
   bool private_tab = false;
   for (const Tab& tab : tabs_) {
     if (tab.id == tab_id) {
-      private_tab = tab.private_flag || tab.internal;
+      private_tab = tab.private_flag;
       break;
     }
   }
@@ -2444,6 +2582,9 @@ void TabManager::RecordVisit(int64_t tab_id, const std::wstring& url,
   if (!(url.rfind(L"http://", 0) == 0 || url.rfind(L"https://", 0) == 0)) {
     return;
   }
+  // Internal UI pages (dask.ui/new-tab/settings/menu) are not "sites":
+  // never record them (their bare dask.ui rows were polluting the list).
+  if (url.rfind(kDaskUiOrigin, 0) == 0 || url == kNewTabUrl) return;
   PostToDb([this, url = Utf8FromWide(url), title = Utf8FromWide(title)]() {
     if (!history_store_) return;
     int64_t id = 0;
@@ -2528,6 +2669,31 @@ void TabManager::SetHistoryEnabled(bool enabled) {
     if (!settings_store_) return;
     std::string err;
     settings_store_->SetBool("historyEnabled", enabled, &err);
+  });
+}
+
+void TabManager::RecordUpgrade(int64_t tab_id, const std::wstring& http_url) {
+  // CEF UI thread.
+  upgraded_http_[tab_id] = http_url;
+}
+
+bool TabManager::WasUpgraded(int64_t tab_id, const std::wstring& https_url,
+                             std::wstring* out_http) {
+  // CEF UI thread. True when this tab's https load came from our HTTPS-Only
+  // upgrade of the same host — the caller then retries the plain-http URL.
+  auto it = upgraded_http_.find(tab_id);
+  if (it == upgraded_http_.end()) return false;
+  if (adblock::UrlHost(https_url) != adblock::UrlHost(it->second)) return false;
+  if (out_http) *out_http = it->second;
+  return true;
+}
+
+void TabManager::SetHttpsOnly(bool enabled) {
+  https_only_ = enabled;
+  PostToDb([this, enabled]() {
+    if (!settings_store_) return;
+    std::string err;
+    settings_store_->SetBool("httpsOnly", enabled, &err);
   });
 }
 
@@ -3760,6 +3926,8 @@ void TabManager::PerformProfileSwitch() {
       storage::Settings prefs(&prefs_db);
       prefs.GetBool("restoreSession", false, &restore_session_, &db_err);
       prefs.GetBool("historyEnabled", true, &history_enabled_, &db_err);
+      prefs.GetBool("httpsOnly", true, &https_only_, &db_err);
+      prefs.GetString("wallpaper", "", &wallpaper_, &db_err);
       prefs.GetInt("historyRetentionDays", 90, &retention_days_, &db_err);
       prefs.GetBool("lightTheme", false, &light_theme_, &db_err);
       prefs.GetString("accent", "", &accent_, &db_err);

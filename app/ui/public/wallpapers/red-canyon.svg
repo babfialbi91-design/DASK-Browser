@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b1f47"/>
+      <stop offset=".5" stop-color="#c2453a"/>
+      <stop offset=".8" stop-color="#f2874b"/>
+      <stop offset="1" stop-color="#ffc178"/>
+    </linearGradient>
+    <linearGradient id="c1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a34a2e"/>
+      <stop offset="1" stop-color="#7a3320"/>
+    </linearGradient>
+    <linearGradient id="c2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6d2b1c"/>
+      <stop offset="1" stop-color="#4a1c12"/>
+    </linearGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#sky)"/>
+  <circle cx="960" cy="780" r="150" fill="#ffd9a0" opacity=".95"/>
+  <circle cx="960" cy="780" r="230" fill="#ffab5e" opacity=".28"/>
+  <g fill="#ffffff" opacity=".6">
+    <circle cx="340" cy="140" r="2"/><circle cx="760" cy="90" r="1.6"/>
+    <circle cx="1180" cy="130" r="2"/><circle cx="1600" cy="80" r="1.5"/>
+    <circle cx="1500" cy="200" r="1.4"/><circle cx="420" cy="240" r="1.5"/>
+  </g>
+  <path fill="url(#c1)" d="M0 700 L0 460 L120 470 L180 620 L260 640 L300 480 L420 470 L500 700 L500 1080 L0 1080 Z"/>
+  <path fill="url(#c1)" d="M1920 690 L1920 430 L1780 450 L1720 600 L1640 620 L1600 460 L1480 480 L1420 700 L1420 1080 L1920 1080 Z"/>
+  <path fill="url(#c2)" d="M0 1080 L0 760 L200 780 L340 720 L520 790 L700 740 L880 800 L1040 750 L1200 810 L1380 760 L1560 820 L1740 770 L1920 800 L1920 1080 Z"/>
+  <g stroke="#3a160d" stroke-width="8" opacity=".35" fill="none">
+    <path d="M40 500 q60 30 120 0"/>
+    <path d="M60 560 q60 30 120 0"/>
+    <path d="M1740 500 q60 30 120 0"/>
+    <path d="M1720 560 q60 30 120 0"/>
+  </g>
+  <g fill="#2e120a">
+    <ellipse cx="960" cy="960" rx="700" ry="60" opacity=".9"/>
+  </g>
+  <g fill="#5c2a18" opacity=".9">
+    <path d="M300 950 l40 -70 l40 70 z"/>
+    <path d="M1500 955 l45 -75 l45 75 z"/>
+  </g>
+</svg>

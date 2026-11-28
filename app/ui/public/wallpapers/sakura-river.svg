@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4c1d95"/>
+      <stop offset=".45" stop-color="#a78bfa"/>
+      <stop offset=".78" stop-color="#f5d0fe"/>
+      <stop offset="1" stop-color="#fdf2f8"/>
+    </linearGradient>
+    <linearGradient id="mt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#4c1d95"/>
+    </linearGradient>
+    <linearGradient id="river" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c4b5fd"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#sky)"/>
+  <circle cx="1440" cy="240" r="110" fill="#fff7fb" opacity=".9"/>
+  <circle cx="1440" cy="240" r="160" fill="#fff7fb" opacity=".2"/>
+  <path fill="url(#mt)" d="M0 640 L280 480 L520 580 L780 440 L1040 570 L1300 470 L1560 590 L1920 500 L1920 1080 L0 1080 Z"/>
+  <path fill="url(#river)" d="M700 640 Q960 700 1220 660 T1920 640 L1920 1080 L700 1080 Z" opacity=".85"/>
+  <g stroke="#ffffff" stroke-width="4" opacity=".4" fill="none">
+    <path d="M800 760 q60 14 120 0 t120 0"/>
+    <path d="M900 850 q70 16 140 0 t140 0"/>
+    <path d="M820 940 q80 16 160 0 t160 0"/>
+  </g>
+  <g fill="#f9a8d4">
+    <path d="M180 660 l24 -60 l24 60 l-60 14 z"/>
+    <path d="M300 640 l28 -70 l28 70 l-64 16 z"/>
+    <path d="M260 760 l22 -55 l22 55 l-52 12 z"/>
+    <path d="M420 700 l26 -65 l26 65 l-60 14 z"/>
+  </g>
+  <g fill="#ec4899" opacity=".85">
+    <path d="M1700 700 l30 -75 l30 75 l-68 16 z"/>
+    <path d="M1560 760 l26 -65 l26 65 l-60 14 z"/>
+  </g>
+  <g fill="#fbcfe8" opacity=".8">
+    <circle cx="600" cy="500" r="7"/><circle cx="840" cy="380" r="6"/>
+    <circle cx="1120" cy="520" r="7"/><circle cx="1300" cy="420" r="5"/>
+    <circle cx="480" cy="420" r="5"/><circle cx="980" cy="460" r="4"/>
+  </g>
+  <g fill="#fdf2f8" opacity=".65">
+    <ellipse cx="300" cy="900" rx="6" ry="3"/>
+    <ellipse cx="500" cy="960" rx="7" ry="3"/>
+    <ellipse cx="760" cy="920" rx="5" ry="3"/>
+    <ellipse cx="1300" cy="980" rx="6" ry="3"/>
+  </g>
+</svg>

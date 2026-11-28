@@ -101,6 +101,7 @@ export interface AppState {
   downloads: DownloadUi[]
   restoreSession: boolean
   historyEnabled: boolean
+  httpsOnly: boolean
   retentionDays: number
   dbNote?: string
   lightTheme: boolean
@@ -149,6 +150,7 @@ export type Request =
   | { type: 'searchHistory'; query: string; limit: number }
   | { type: 'clearHistory'; days: number }
   | { type: 'setHistoryEnabled'; enabled: boolean }
+  | { type: 'setHttpsOnly'; enabled: boolean }
   | { type: 'setRetentionDays'; days: number }
   | { type: 'setRestoreSession'; enabled: boolean }
   | { type: 'cancelDownload'; id: number }
@@ -187,11 +189,11 @@ export type Request =
   | { type: 'windowControl'; action: 'min' | 'max' | 'close' }
   | {
       type: 'getSetting'
-      key: 'accent' | 'onboarded' | 'homepage' | 'updateCheckEnabled'
+      key: 'accent' | 'onboarded' | 'homepage' | 'updateCheckEnabled' | 'wallpaper'
     }
   | {
       type: 'setSetting'
-      key: 'accent' | 'onboarded' | 'homepage' | 'updateCheckEnabled'
+      key: 'accent' | 'onboarded' | 'homepage' | 'updateCheckEnabled' | 'wallpaper'
       value: string
     }
   | { type: 'checkUpdate' }
@@ -242,6 +244,14 @@ export async function sendTyped<T>(req: Request): Promise<T> {
   return JSON.parse(raw || '{}') as T
 }
 
+// getSetting returns the value as a plain string (e.g. "#8b5cf6", "1"),
+// which is NOT JSON — always read it with this helper, never via sendTyped.
+export async function getSettingRaw(
+  key: 'accent' | 'onboarded' | 'homepage' | 'updateCheckEnabled' | 'wallpaper',
+): Promise<string> {
+  return sendRaw({ type: 'getSetting', key })
+}
+
 export function send(req: Request): Promise<unknown> {
   if (!hasBridge()) {
     return Promise.reject(new Error('bridge unavailable (must run inside DASK Browser)'))
@@ -290,6 +300,7 @@ function coerceState(value: unknown): AppState {
     downloads: parsed.downloads ?? [],
     restoreSession: parsed.restoreSession ?? true,
     historyEnabled: parsed.historyEnabled ?? true,
+    httpsOnly: parsed.httpsOnly ?? true,
     retentionDays: parsed.retentionDays ?? 90,
     dbNote: parsed.dbNote,
     lightTheme: parsed.lightTheme ?? false,
